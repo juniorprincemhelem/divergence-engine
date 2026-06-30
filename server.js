@@ -1,14 +1,44 @@
+require("dotenv").config();
+
 const axios = require("axios");
 const fs = require("fs");
 const http = require("http");
+const path = require("path");
 
-const { jwt, apiToken, baseUrl } = JSON.parse(fs.readFileSync("./api-token.json", "utf8"));
-const headers = { Authorization: `Bearer ${jwt}`, "X-Api-Token": apiToken };
+const tokenFilePath = path.join(__dirname, "api-token.json");
+const fixturesFilePath = path.join(__dirname, "fixtures.json");
+
+let jwt = process.env.TXLINE_JWT;
+let apiToken = process.env.TXLINE_API_TOKEN;
+let baseUrl = process.env.TXLINE_BASE_URL || "http://txline-dev.txodds.com";
+
+if (!jwt || !apiToken) {
+  try {
+    const tokenData = JSON.parse(fs.readFileSync(tokenFilePath, "utf8"));
+    jwt = jwt || tokenData.jwt;
+    apiToken = apiToken || tokenData.apiToken;
+    baseUrl = tokenData.baseUrl || baseUrl;
+  } catch (error) {
+    console.warn("⚠️ No local api-token.json found. Using TXLINE_* environment variables if provided.");
+  }
+}
+
+if (!jwt || !apiToken) {
+  console.warn("⚠️ Missing TXLINE_JWT or TXLINE_API_TOKEN. The dashboard will start in degraded mode.");
+}
+
+const headers = { Authorization: `Bearer ${jwt || ""}`, "X-Api-Token": apiToken || "" };
 
 const POLL_INTERVAL_MS = 60000;
 const DIVERGENCE_THRESHOLD = 2.0;
 const SMOOTHING_WINDOW = 3;
-const fixtures = JSON.parse(fs.readFileSync("./fixtures.json", "utf8"));
+
+let fixtures = [];
+try {
+  fixtures = JSON.parse(fs.readFileSync(fixturesFilePath, "utf8"));
+} catch (error) {
+  console.warn("⚠️ No local fixtures.json found. Starting without fixture data.");
+}
 
 let previousOdds = {};
 let oddsHistory = {};   // { fixtureId: [{ts, homePct, drawPct, awayPct}] }

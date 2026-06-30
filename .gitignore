@@ -1,6 +1,5 @@
 node_modules/
 api-token.json
 divergence-log.json
-fixtures.json
 *.env
 .env

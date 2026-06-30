@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "run subscribe.js",
+			"type": "shell",
+			"command": "node subscribe.js",
+			"problemMatcher": []
+		},
+		{
+			"label": "run subscribe.js",
+			"type": "shell",
+			"command": "node subscribe.js",
+			"problemMatcher": []
+		}
+	]
+}

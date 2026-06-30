@@ -1,0 +1,74 @@
+{
+  "address": "6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J",
+  "metadata": {
+    "name": "txoracle",
+    "version": "1.5.2",
+    "spec": "0.1.0",
+    "description": "TxODDS TxLINE Data system"
+  },
+  "instructions": [
+    {
+      "name": "subscribe",
+      "discriminator": [254, 28, 191, 138, 156, 179, 183, 53],
+      "accounts": [
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "pricingMatrix" },
+        { "name": "tokenMint" },
+        { "name": "userTokenAccount", "writable": true },
+        { "name": "tokenTreasuryVault", "writable": true },
+        { "name": "tokenTreasuryPda" },
+        { "name": "tokenProgram" },
+        { "name": "systemProgram" },
+        { "name": "associatedTokenProgram" }
+      ],
+      "args": [
+        { "name": "serviceLevelId", "type": "u16" },
+        { "name": "weeks", "type": "u8" }
+      ]
+    },
+    {
+      "name": "requestDevnetFaucet",
+      "discriminator": [6, 55, 211, 124, 12, 9, 38, 250],
+      "accounts": [
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "tokenMint", "writable": true },
+        { "name": "userTokenAccount", "writable": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" },
+        { "name": "systemProgram" }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "pricingMatrix",
+      "discriminator": [173, 13, 64, 22, 248, 77, 110, 106]
+    }
+  ],
+  "types": [
+    {
+      "name": "serviceRow",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "rowId", "type": "u16" },
+          { "name": "pricePerWeekToken", "type": "u64" },
+          { "name": "samplingIntervalSec", "type": "u32" },
+          { "name": "leagueBundleId", "type": "i16" },
+          { "name": "marketBundleId", "type": "i16" }
+        ]
+      }
+    },
+    {
+      "name": "pricingMatrix",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "admin", "type": "pubkey" },
+          { "name": "rows", "type": { "vec": { "defined": { "name": "serviceRow" } } } }
+        ]
+      }
+    }
+  ]
+}

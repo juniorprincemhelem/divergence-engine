@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const anchor = require("@coral-xyz/anchor");
 const { Connection, Keypair, PublicKey, SystemProgram } = require("@solana/web3.js");
 const {
@@ -31,8 +33,9 @@ const SERVICE_LEVEL_ID = 1;
 const DURATION_WEEKS = 4;
 const SELECTED_LEAGUES = [];
 
-const AUTH_URL = "http://txline-dev.txodds.com/auth/guest/start";
-const ACTIVATE_URL = "http://txline-dev.txodds.com/api/token/activate";
+const baseUrl = process.env.TXLINE_BASE_URL || "http://txline-dev.txodds.com";
+const AUTH_URL = `${baseUrl}/auth/guest/start`;
+const ACTIVATE_URL = `${baseUrl}/api/token/activate`;
 
 (async () => {
   try {
@@ -96,7 +99,7 @@ const ACTIVATE_URL = "http://txline-dev.txodds.com/api/token/activate";
       jwt,
       apiToken,
       txSig,
-      baseUrl: "http://txline-dev.txodds.com"
+      baseUrl
     }, null, 2));
     console.log("💾 Saved to api-token.json — we're ready to pull data!");
 

@@ -19,15 +19,16 @@ if (!jwt || !apiToken) {
     apiToken = apiToken || tokenData.apiToken;
     baseUrl = tokenData.baseUrl || baseUrl;
   } catch (error) {
-    console.warn("?? No local api-token.json found. Using TXLINE_* environment variables if provided.");
+    console.warn("No local api-token.json found. Using TXLINE_* environment variables if provided.");
   }
 }
 
 if (!jwt || !apiToken) {
-  console.warn("?? Missing TXLINE_JWT or TXLINE_API_TOKEN. The dashboard will start in degraded mode.");
+  console.warn("Missing TXLINE_JWT or TXLINE_API_TOKEN. The dashboard will start in degraded mode.");
 }
 
 const headers = { Authorization: `Bearer ${jwt || ""}`, "X-Api-Token": apiToken || "" };
+
 const POLL_INTERVAL_MS = 60000;
 const SMOOTHING_WINDOW = 3;
 
@@ -35,119 +36,128 @@ let fixtures = [];
 try {
   fixtures = JSON.parse(fs.readFileSync(fixturesFilePath, "utf8"));
 } catch (error) {
-  console.warn("?? No local fixtures.json found. Starting without fixture data.");
+  console.warn("No local fixtures.json found. Starting without fixture data.");
 }
 
 let oddsHistory = {};
 let divergenceLog = [];
-let eventTimeline = [];
-let liveData = [];
 let pollCount = 0;
+let liveData = [];
 let lastFlagged = {};
-let marketIntel = {
-  updated: new Date().toISOString(),
-  headline: "Market intelligence preview initializing...",
-  summary: "Live market flows will appear here as the engine polls.",
-  edge: "N/A",
-  focus: "N/A",
-  recommendation: "—"
-};
 
 function parseOdds(oddsArray) {
   const market = oddsArray.find(o => o.SuperOddsType === "1X2_PARTICIPANT_RESULT");
   if (!market) return null;
   return {
-    ts: market.Ts,
-    homePct: parseFloat(market.Pct?.[0] || 0),
-    drawPct: parseFloat(market.Pct?.[1] || 0),
-    awayPct: parseFloat(market.Pct?.[2] || 0),
-    inRunning: Boolean(market.InRunning),
-    homePrice: (market.Prices?.[0] || 0) / 1000,
-    drawPrice: (market.Prices?.[1] || 0) / 1000,
-    awayPrice: (market.Prices?.[2] || 0) / 1000,
+    ts: Date.now(),
+    home: market.Prices[0] / 1000,
+    draw: market.Prices[1] / 1000,
+    away: market.Prices[2] / 1000,
+    homePct: parseFloat(market.Pct[0]),
+    drawPct: parseFloat(market.Pct[1]),
+    awayPct: parseFloat(market.Pct[2]),
+    inRunning: market.InRunning,
+  };
+}
+
+function averageOdds(samples) {
+  const totals = samples.reduce(
+    (acc, item) => ({
+      homePct: acc.homePct + item.homePct,
+      drawPct: acc.drawPct + item.drawPct,
+      awayPct: acc.awayPct + item.awayPct,
+    }),
+    { homePct: 0, drawPct: 0, awayPct: 0 }
+  );
+  const count = Math.max(1, samples.length);
+  return {
+    homePct: totals.homePct / count,
+    drawPct: totals.drawPct / count,
+    awayPct: totals.awayPct / count,
+  };
+}
+
+function getSmoothedOdds(history, current) {
+  const prevWindow = history.slice(-SMOOTHING_WINDOW);
+  const currentWindow = history.slice(-SMOOTHING_WINDOW + 1).concat(current);
+  return {
+    prev: averageOdds(prevWindow),
+    current: averageOdds(currentWindow),
   };
 }
 
 function computeSignal(id, current) {
   const history = oddsHistory[id] || [];
-  if (history.length < 1) {
-    return {
-      score: 0,
-      confidence: 'LOW',
-      status: 'STABLE',
-      statusLabel: 'STABLE',
-      emoji: '🟦',
-      magnitude: 0,
-      velocity: 1,
-      consistency: 0,
-      reason: 'Baseline captured, no signal yet.'
-    };
-  }
+  if (history.length === 0) return null;
 
   const prev = history[history.length - 1];
-  const homeShift = current.homePct - prev.homePct;
-  const drawShift = current.drawPct - prev.drawPct;
-  const awayShift = current.awayPct - prev.awayPct;
-  const magnitude = Math.max(Math.abs(homeShift), Math.abs(drawShift), Math.abs(awayShift));
-  const velocity = 1 + magnitude * 0.18;
-  const consistency = Math.max(0, 100 - magnitude * 4);
-  const rawScore = (magnitude * 6) + ((velocity - 1) * 18) + (consistency * 0.12);
-  const score = Math.round(Math.max(0, Math.min(100, rawScore)));
-  let confidence = 'LOW';
-  let statusLabel = 'STABLE';
-  let emoji = '🟦';
+  const { prev: baseline, current: smoothed } = getSmoothedOdds(history, current);
 
-  if (score >= 70) {
-    confidence = 'HIGH';
-    statusLabel = 'SIGNAL TRIGGERED';
-    emoji = '⚡';
-  } else if (score >= 45) {
-    confidence = 'MEDIUM';
-    statusLabel = 'ACCELERATING';
-    emoji = '↑';
-  } else if (score >= 25) {
-    confidence = 'LOW';
-    statusLabel = 'WATCHING';
-    emoji = '👀';
+  const homeDrift = Math.abs(smoothed.homePct - baseline.homePct);
+  const drawDrift = Math.abs(smoothed.drawPct - baseline.drawPct);
+  const awayDrift = Math.abs(smoothed.awayPct - baseline.awayPct);
+  const magnitude = Math.max(homeDrift, drawDrift, awayDrift);
+
+  let velocity = 1;
+  if (history.length >= 3) {
+    const recentMagnitudes = [];
+    for (let i = history.length - 1; i > Math.max(0, history.length - 4); i--) {
+      const a = history[i], b = history[i - 1];
+      if (b) recentMagnitudes.push(Math.max(
+        Math.abs(a.homePct - b.homePct),
+        Math.abs(a.drawPct - b.drawPct),
+        Math.abs(a.awayPct - b.awayPct)
+      ));
+    }
+    const avgMagnitude = recentMagnitudes.reduce((s, v) => s + v, 0) / recentMagnitudes.length || magnitude;
+    velocity = avgMagnitude > 0 ? Math.min(1.5, magnitude / avgMagnitude) : 1;
+  }
+
+  let consistencyBonus = 0;
+  if (history.length >= 2) {
+    const prev2 = history[history.length - 2];
+    const sameHomeDir = Math.sign(current.homePct - prev.homePct) === Math.sign(prev.homePct - prev2.homePct);
+    const sameAwayDir = Math.sign(current.awayPct - prev.awayPct) === Math.sign(prev.awayPct - prev2.awayPct);
+    consistencyBonus = (sameHomeDir || sameAwayDir) ? 8 : -5;
+  }
+
+  const rawScore = (magnitude * 5) + (velocity - 1) * 15 + consistencyBonus;
+  const score = Math.max(0, Math.min(100, Math.round(rawScore)));
+
+  let confidence, reason;
+  if (history.length < 2) {
+    confidence = "LOW";
+    reason = "Insufficient polling history";
+  } else if (score >= 60) {
+    confidence = "HIGH";
+    reason = magnitude.toFixed(2) + "% smoothed shift, velocity " + velocity.toFixed(2) + "x recent average";
+  } else if (score >= 30) {
+    confidence = "MEDIUM";
+    reason = magnitude.toFixed(2) + "% smoothed drift, " + (consistencyBonus > 0 ? "consistent direction" : "mixed direction — possible noise");
+  } else {
+    confidence = "LOW";
+    reason = magnitude.toFixed(2) + "% smoothed movement — within normal noise range";
   }
 
   return {
+    magnitude: +magnitude.toFixed(3),
+    velocity: +velocity.toFixed(2),
     score,
     confidence,
-    status: statusLabel,
-    statusLabel,
-    emoji,
-    magnitude: parseFloat((magnitude * 100).toFixed(2)),
-    velocity: parseFloat(velocity.toFixed(2)),
-    consistency: parseFloat(consistency.toFixed(0)),
-    reason: `${(magnitude * 100).toFixed(2)}% drift detected`,
-    homeDrift: homeShift,
-    drawDrift: drawShift,
-    awayDrift: awayShift,
+    reason,
+    homeDrift: +(current.homePct - prev.homePct).toFixed(3),
+    drawDrift: +(current.drawPct - prev.drawPct).toFixed(3),
+    awayDrift: +(current.awayPct - prev.awayPct).toFixed(3),
   };
 }
 
-function shouldLogDivergence(id, signal) {
-  if (!signal) return false;
-  if (signal.status === 'SIGNAL_TRIGGERED') return true;
-  if (signal.status === 'ACCELERATING' && (!lastFlagged[id] || lastFlagged[id].status !== 'ACCELERATING')) return true;
-  return false;
-}
-
-function addTimelineEvent(event) {
-  eventTimeline.unshift(Object.assign({ timestamp: new Date().toISOString() }, event));
-  if (eventTimeline.length > 50) eventTimeline.pop();
-}
-
-function buildMarketIntel() {
-  return {
-    updated: new Date().toISOString(),
-    headline: `Live market scan — ${liveData.length} fixtures updated`,
-    summary: `Latest market scan completed with ${divergenceLog.length} divergence events.`,
-    edge: `${divergenceLog.length > 0 ? 'Momentum' : 'Stable'}`,
-    focus: `${liveData.length} tracked fixtures`,
-    recommendation: divergenceLog.length > 0 ? 'Monitor high-confidence signals.' : 'Continue watching.',
-  };
+function shouldLogDivergence(id, signal, count) {
+  if (!signal || signal.score < 40) return false;
+  const last = lastFlagged[id];
+  if (!last) return true;
+  const pollsSinceLastFlag = count - last.pollCount;
+  const scoreJump = signal.score - last.score;
+  return pollsSinceLastFlag >= 15 || scoreJump >= 20;
 }
 
 async function poll() {
@@ -157,7 +167,7 @@ async function poll() {
   for (const fixture of fixtures) {
     const id = fixture.FixtureId;
     try {
-      const res = await axios.get(`${baseUrl}/api/odds/snapshot/${id}`, { headers });
+      const res = await axios.get(baseUrl + "/api/odds/snapshot/" + id, { headers });
       if (!res.data || res.data.length === 0) continue;
       const current = parseOdds(res.data);
       if (!current) continue;
@@ -167,40 +177,25 @@ async function poll() {
       oddsHistory[id].push({ ts: current.ts, homePct: current.homePct, drawPct: current.drawPct, awayPct: current.awayPct });
       if (oddsHistory[id].length > 30) oddsHistory[id].shift();
 
-      if (signal && shouldLogDivergence(id, signal, pollCount)) {
+      if (shouldLogDivergence(id, signal, pollCount)) {
         divergenceLog.unshift({
           timestamp: new Date().toISOString(),
           pollCount,
           fixtureId: id,
-          fixture: `${fixture.Participant1} vs ${fixture.Participant2}`,
+          fixture: fixture.Participant1 + " vs " + fixture.Participant2,
           competition: fixture.Competition,
           signal,
           current,
           inRunning: current.inRunning,
         });
         if (divergenceLog.length > 50) divergenceLog.pop();
-        lastFlagged[id] = { score: signal.score, pollCount, status: signal.status };
+        lastFlagged[id] = { score: signal.score, pollCount };
         fs.writeFileSync("./divergence-log.json", JSON.stringify(divergenceLog, null, 2));
-        addTimelineEvent({
-          fixture: `${fixture.Participant1} vs ${fixture.Participant2}`,
-          icon: signal.emoji,
-          badge: signal.statusLabel,
-          message: `${signal.emoji} ${signal.statusLabel} detected at ${signal.score} score.`,
-          details: signal.reason,
-        });
-      } else if (signal && signal.status === "ACCELERATING" && (!lastFlagged[id] || lastFlagged[id].status !== "ACCELERATING")) {
-        addTimelineEvent({
-          fixture: `${fixture.Participant1} vs ${fixture.Participant2}`,
-          icon: "?",
-          badge: "ACCELERATING",
-          message: `Momentum accelerating with ${signal.score} score.`,
-          details: signal.reason,
-        });
       }
 
-          newData.push({
+      newData.push({
         id,
-        name: `${fixture.Participant1} vs ${fixture.Participant2}`,
+        name: fixture.Participant1 + " vs " + fixture.Participant2,
         home: fixture.Participant1,
         away: fixture.Participant2,
         competition: fixture.Competition,
@@ -208,30 +203,14 @@ async function poll() {
         signal,
         history: oddsHistory[id].slice(-10),
       });
+
     } catch (e) {
-      const message = e.response?.data || e.message;
-      console.error(`Error fetching ${fixture.Participant1} vs ${fixture.Participant2}:`, message);
-      addTimelineEvent({
-        fixture: `${fixture.Participant1} vs ${fixture.Participant2}`,
-        icon: "??",
-        badge: "ERROR",
-        message: "Data fetch failed.",
-        details: `${message}`,
-      });
+      console.error("Error fetching " + fixture.Participant1 + " vs " + fixture.Participant2 + ":", e.response && e.response.status, e.response && e.response.data || e.message);
     }
   }
 
   liveData = newData;
-  marketIntel = buildMarketIntel();
-  addTimelineEvent({
-    fixture: "Market scan",
-    icon: "??",
-    badge: "HEARTBEAT",
-    message: `Poll #${pollCount} completed with ${newData.length} fixtures.`,
-    details: `Live engine refreshed at ${new Date().toLocaleTimeString()}.`,
-  });
-
-  console.log(`Poll #${pollCount} | fixtures=${newData.length} | divergences=${divergenceLog.length}`);
+  console.log("Poll #" + pollCount + " | " + newData.length + " fixtures | " + divergenceLog.length + " divergences");
 }
 
 const html = `<!DOCTYPE html>
@@ -240,1083 +219,558 @@ const html = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Divergence Engine</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.tailwindcss.com"><\/script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"><\/script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"><\/script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"><\/script>
 <style>
-:root {
-  color-scheme: dark;
-  color: #d7e0ff;
-  background: #060914;
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-}
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-html, body {
-  min-height: 100%;
-}
-body {
-  background: radial-gradient(circle at top, rgba(61, 201, 176, 0.12), transparent 30%),
-              linear-gradient(180deg, #090c15 0%, #05070f 100%);
-  color: #d7e0ff;
-  font-size: 13px;
-  line-height: 1.5;
-}
-a {
-  color: #75b7ff;
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-button, input {
-  font: inherit;
-}
-button {
-  cursor: pointer;
-}
-img {
-  max-width: 100%;
-}
-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 18px;
-  padding: 22px 28px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.brand-logo {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  border-radius: 14px;
-  background: rgba(61, 201, 176, 0.16);
-  color: #3dc9b0;
-  font-size: 18px;
-}
-.brand-copy {
-  display: grid;
-  gap: 6px;
-}
-.brand-copy h1 {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-}
-.brand-copy p {
-  color: #8da4ce;
-  font-size: 12px;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.kpi-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.kpi {
-  min-width: 88px;
-  padding: 10px 14px;
-  background: rgba(10, 16, 32, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
-}
-.kpi strong {
-  display: block;
-  font-size: 18px;
-  font-weight: 700;
-  color: #f5f8ff;
-}
-.kpi span {
-  display: block;
-  margin-top: 4px;
-  font-size: 10px;
-  color: #7f94c3;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #8ae7cb;
-  padding: 10px 14px;
-  border: 1px solid rgba(61, 201, 176, 0.28);
-  border-radius: 999px;
-  background: rgba(61, 201, 176, 0.08);
-  font-size: 12px;
-  font-weight: 600;
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #3dc9b0;
-  box-shadow: 0 0 0 6px rgba(61, 201, 176, 0.12);
-}
-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(340px, 0.9fr);
-  gap: 20px;
-  padding: 22px 28px 28px;
-}
-@media (max-width: 1100px) {
-  main {
-    grid-template-columns: 1fr;
-  }
-}
-.panel {
-  background: rgba(8, 12, 24, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 22px;
-  padding: 22px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
-}
-.panel + .panel {
-  margin-top: 20px;
-}
-.panel-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.panel-title h2 {
-  font-size: 16px;
-  font-weight: 700;
-  color: #e5ebff;
-}
-.panel-title small {
-  color: #7c8db9;
-  font-size: 11px;
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
-}
-.card {
-  background: rgba(7, 11, 20, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 18px;
-  padding: 18px;
-  transition: transform 0.2s ease, border-color 0.2s ease;
-}
-.card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(61, 201, 176, 0.35);
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.card-header .title {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-}
-.card-header .subtle {
-  color: #7c8bb4;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 6px 10px;
-  border-radius: 999px;
-}
-.badge.LIVE { background: rgba(61, 201, 176, 0.14); color: #8ae7cb; border: 1px solid rgba(61, 201, 176, 0.24); }
-.badge.WATCHING { background: rgba(79, 158, 255, 0.14); color: #9ac8ff; border: 1px solid rgba(79, 158, 255, 0.24); }
-.badge.ACCELERATING { background: rgba(255, 181, 71, 0.12); color: #ffd78f; border: 1px solid rgba(255, 181, 71, 0.2); }
-.badge.SIGNAL_TRIGGERED { background: rgba(255, 106, 80, 0.12); color: #ffac8e; border: 1px solid rgba(255, 106, 80, 0.22); }
-.badge.STABLE { background: rgba(137, 150, 255, 0.10); color: #b6c5ff; border: 1px solid rgba(137, 150, 255, 0.18); }
-.card-body {
-  display: grid;
-  gap: 10px;
-}
-.prob-row {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.prob-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.prob-name {
-  font-size: 11px;
-  color: #8c9cd6;
-}
-.prob-val {
-  font-size: 12px;
-  font-weight: 700;
-  color: #f0f5ff;
-}
-.track {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 999px;
-  height: 6px;
-  overflow: hidden;
-}
-.fill {
-  height: 100%;
-  border-radius: 999px;
-}
-.fill-h { background: #5b8cff; }
-.fill-d { background: #9377ff; }
-.fill-a { background: #42d5b3; }
-.acc-wrap {
-  display: grid;
-  gap: 18px;
-}
-.acc-desc {
-  color: #8b9aca;
-  font-size: 12px;
-}
-.acc-row {
-  display: grid;
-  gap: 12px;
-}
-.acc-field {
-  display: grid;
-  gap: 6px;
-}
-.acc-field label {
-  color: #7b8db4;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-.acc-field div {
-  color: #f2f7ff;
-  font-weight: 700;
-}
-input[type='range'] {
-  width: 100%;
-  accent-color: #3dc9b0;
-}
-.acc-buttons {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.acc-btn {
-  padding: 10px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: #cdd7ff;
-  transition: all 0.2s ease;
-}
-.acc-btn:hover {
-  border-color: rgba(61, 201, 176, 0.3);
-  color: #fff;
-  background: rgba(61, 201, 176, 0.14);
-}
-.acc-prob-wrap {
-  display: grid;
-  gap: 4px;
-  text-align: right;
-}
-.acc-prob-label {
-  color: #7c8cb6;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-.acc-prob-val {
-  font-size: 28px;
-  font-weight: 700;
-  color: #62e6c3;
-}
-.log-wrap {
-  overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-th, td {
-  padding: 12px 14px;
-}
-th {
-  color: #6f86b6;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-td {
-  color: #d3dcff;
-  font-size: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-tr:hover td {
-  background: rgba(255, 255, 255, 0.02);
-}
-.empty {
-  text-align: center;
-  padding: 24px;
-  color: #5c718f;
-}
-.right-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.right-title {
-  font-size: 16px;
-  font-weight: 700;
-}
-.proof-bar,
-.replay-bar,
-.intel-wrap,
-.tl-wrap {
-  margin-bottom: 20px;
-}
-.proof-bar {
-  display: grid;
-  gap: 14px;
-}
-.proof-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.proof-key {
-  color: #7c8cb6;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-.proof-val {
-  color: #f4f7ff;
-  font-weight: 700;
-}
-.proof-val.green { color: #3dc9b0; }
-.proof-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(61, 201, 176, 0.12);
-  color: #a0f3dc;
-  border: 1px solid rgba(61, 201, 176, 0.18);
-  text-align: center;
-}
-.replay-bar {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.02);
-}
-.replay-info {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.replay-label {
-  color: #7c8db4;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-.replay-status {
-  color: #e7f4ff;
-  font-weight: 700;
-}
-.replay-btn {
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 14px;
-  border: none;
-  background: linear-gradient(135deg, #4c86ff, #3dc9b0);
-  color: #fff;
-  font-weight: 700;
-}
-.replay-btn:hover {
-  opacity: 0.95;
-}
-.intel-wrap {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.intel-label {
-  color: #7c8bb8;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
-.intel-headline {
-  font-size: 17px;
-  font-weight: 700;
-  color: #f7faff;
-}
-.intel-body {
-  color: #b5c2e2;
-  font-size: 12px;
-  line-height: 1.7;
-}
-.intel-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.intel-stat {
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.intel-stat strong {
-  display: block;
-  color: #7c8cb6;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  margin-bottom: 6px;
-}
-.intel-stat span {
-  color: #f5f8ff;
-  font-size: 14px;
-  font-weight: 700;
-}
-.intel-rec {
-  color: #8b9aca;
-  font-size: 12px;
-}
-.intel-rec strong {
-  color: #d3e1ff;
-}
-.tl-wrap {
-  padding: 18px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-.timeline-entry {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 16px;
-  padding: 14px;
-  margin-bottom: 12px;
-}
-.timeline-entry:last-child {
-  margin-bottom: 0;
-}
-.timeline-meta {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.timeline-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: rgba(61, 201, 176, 0.14);
-  color: #3dc9b0;
-  font-size: 14px;
-}
-.timeline-body {
-  flex: 1;
-}
-.timeline-body strong {
-  display: block;
-  color: #eef2ff;
-  font-size: 13px;
-  margin-bottom: 6px;
-}
-.timeline-body p {
-  color: #9eb2d8;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.timeline-badge,
-.timeline-time {
-  display: block;
-  margin-top: 10px;
-  color: #7c8cb6;
-  font-size: 11px;
-}
-footer {
-  padding: 16px 28px 24px;
-  color: #5f75a1;
-  font-size: 11px;
-  text-align: center;
-}
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+  @keyframes pulse2 { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .animate-pulse { animation: pulse2 1.5s infinite; }
 </style>
 </head>
-<body>
-<header>
-  <div class="brand">
-    <div class="brand-logo"><i class="fa-solid fa-signal"></i></div>
-    <div class="brand-copy">
-      <h1>DIVERGENCE ENGINE</h1>
-      <p>Solscan-backed terminal dashboard</p>
-    </div>
-  </div>
-  <div class="header-right">
-    <div class="status-pill"><span class="status-dot"></span>Live Devnet</div>
-    <div class="kpi-row">
-      <div class="kpi"><strong id="sPoll">0</strong><span>Polls</span></div>
-      <div class="kpi"><strong id="sFix">0</strong><span>Fixtures</span></div>
-      <div class="kpi"><strong id="sDiv">0</strong><span>Divergences</span></div>
-    </div>
-    <div class="kpi"><strong id="sTime">--:--:--</strong><span>Last update</span></div>
-  </div>
-</header>
-<main>
-  <section class="panel">
-    <div class="panel-title">
-      <h2>Live Fixtures</h2>
-      <small>Updated every 60 seconds</small>
-    </div>
-    <div class="grid" id="grid"></div>
-  </section>
-  <aside class="panel">
-    <div class="panel-title">
-      <h2>Proof & Replay</h2>
-      <small>Solscan reference + demo mode</small>
-    </div>
-    <div class="proof-bar">
-      <div class="proof-item"><div class="proof-key">Network</div><div class="proof-val">Solana Devnet</div></div>
-      <div class="proof-item"><div class="proof-key">Tx</div><div class="proof-val" id="proofTx">—</div></div>
-      <div class="proof-item"><div class="proof-key">Status</div><div class="proof-val green">Active</div></div>
-      <a id="proofLink" class="proof-link" href="#" target="_blank"><i class="fa-solid fa-arrow-up-right-from-square"></i>View on Solscan</a>
-    </div>
-    <div class="replay-bar">
-      <div class="replay-info">
-        <div>
-          <div class="replay-label">Replay state</div>
-          <div class="replay-status" id="replayStatus">Idle</div>
-        </div>
-        <div>
-          <div class="replay-label">Phase</div>
-          <div class="replay-status"><span id="replayStep">0</span>/6</div>
-        </div>
-        <div>
-          <div class="replay-label">Countdown</div>
-          <div class="replay-status" id="replayRemaining">--s</div>
-        </div>
-      </div>
-      <button id="demoReplayBtn" class="replay-btn">Launch Replay</button>
-    </div>
-    <div class="intel-wrap">
-      <div class="intel-label">Market Intelligence</div>
-      <div class="intel-headline" id="marketHeadline">Loading...</div>
-      <div class="intel-body" id="marketSummary">Awaiting data from odds feed.</div>
-      <div class="intel-stats">
-        <div class="intel-stat"><strong>Edge</strong><span id="marketEdge">—</span></div>
-        <div class="intel-stat"><strong>Focus</strong><span id="marketFocus">—</span></div>
-      </div>
-      <div class="intel-rec"><strong>Recommendation:</strong> <span id="marketRecommendation">—</span></div>
-    </div>
-    <div class="tl-wrap">
-      <div class="panel-title" style="margin-bottom: 12px;">
-        <h2>Event Timeline</h2>
-        <small>Recent system actions</small>
-      </div>
-      <div id="timelineFeed"></div>
-    </div>
-  </aside>
-</main>
-<footer>Divergence Engine v1.0 · TxODDS Hackathon 2026 · Solana Devnet</footer>
+<body class="bg-slate-950">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
 
-<script>
-const charts = {};
-let accChart;
-let replayTimer = null;
-let replayPhase = 0;
-let replayCountdown = 0;
-let liveData = [];
-let replayActive = false;
-let savedLiveData = null;
+const TXSIG = "4CQSxcwPCGub4Eyz9L2HaqEqfb5QHw1qDpJKBqUqCrwgdGNozhFwPLsEJfY1Vf2PNfpdHYG4Zxw1eohtJTF93i8U";
 
-function drift(val) {
-  if (val === null || val === undefined) return '';
-  if (val > 0.05) return '<span class="drift up">▲' + Math.abs(val).toFixed(2) + '%</span>';
-  if (val < -0.05) return '<span class="drift down">▼' + Math.abs(val).toFixed(2) + '%</span>';
-  return '<span class="drift flat">─</span>';
+const FLAG_CODES = {
+  'Brazil':'br','Japan':'jp','France':'fr','Sweden':'se',
+  'Netherlands':'nl','Morocco':'ma','Germany':'de','Paraguay':'py',
+  'Argentina':'ar','Cape Verde':'cv','Ivory Coast':'ci','Norway':'no',
+  'Colombia':'co','Ghana':'gh','Switzerland':'ch','Algeria':'dz',
+  'USA':'us','Bosnia & Herzegovina':'ba','England':'gb-eng','Congo DR':'cd',
+  'Australia':'au','Egypt':'eg','Mexico':'mx','Ecuador':'ec',
+  'Belgium':'be','Senegal':'sn','Vietnam':'vn','Myanmar':'mm',
+  'Canada':'ca','Croatia':'hr','Serbia':'rs','Ukraine':'ua',
+  'Poland':'pl','Denmark':'dk','Iran':'ir','Cameroon':'cm',
+  'Tunisia':'tn','Saudi Arabia':'sa','Qatar':'qa','Uruguay':'uy',
+};
+
+function FlagImg({ team }) {
+  const code = FLAG_CODES[team];
+  if (!code) return <span className="w-5 inline-block"/>;
+  return <img src={"https://flagcdn.com/20x15/" + code + ".png"} width="20" height="15" style={{borderRadius:'2px',verticalAlign:'middle',marginRight:'4px'}} alt={team}/>;
 }
 
-function probRow(label, pct, d, fillClass) {
-  return '<div class="prob-row">' +
-    '<div class="prob-meta">' +
-      '<span class="prob-name">' + label + '</span>' +
-      '<div class="prob-right"><span class="prob-val">' + pct.toFixed(2) + '%</span>' + drift(d) + '</div>' +
-    '</div>' +
-    '<div class="track"><div class="fill ' + fillClass + '" style="width:' + Math.min(pct,100) + '%"></div></div>' +
-  '</div>';
-}
-
-function renderChart(canvasId, history) {
-  const labels = history.map((_, i) => '-' + (history.length - 1 - i) + 'm');
-  const data = {
-    labels,
-    datasets: [
-      { label: 'Home', data: history.map(h => h.homePct), borderColor: '#4f9eff', backgroundColor: 'rgba(79,158,255,0.1)', tension: 0.35, pointRadius: 1, borderWidth: 2 },
-      { label: 'Draw', data: history.map(h => h.drawPct), borderColor: '#8b77ff', backgroundColor: 'rgba(139,119,255,0.1)', tension: 0.35, pointRadius: 1, borderWidth: 2 },
-      { label: 'Away', data: history.map(h => h.awayPct), borderColor: '#3dc9b0', backgroundColor: 'rgba(61,201,176,0.1)', tension: 0.35, pointRadius: 1, borderWidth: 2 },
-    ]
-  };
-  if (charts[canvasId]) {
-    charts[canvasId].data = data;
-    charts[canvasId].update('none');
-  } else {
-    const ctx = document.getElementById(canvasId)?.getContext('2d');
-    if (!ctx) return;
-    charts[canvasId] = new Chart(ctx, {
-      type: 'line', data,
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#5c6f8f', font: { size: 9 } }, grid: { color: '#0f172d' } },
-          y: { min: 0, max: 100, ticks: { color: '#5c6f8f', font: { size: 9 }, callback: v => v + '%' }, grid: { color: '#0f172d' } }
-        }
-      }
-    });
-  }
-}
-
-function renderTimeline(events) {
-  const feed = document.getElementById('timelineFeed');
-  if (!events.length) {
-    feed.innerHTML = '<div class="empty">No timeline events yet.</div>';
-    return;
-  }
-  feed.innerHTML = events.slice(0, 20).map(function(e) {
-    return '<div class="timeline-entry">' +
-      '<div class="timeline-meta">' +
-        '<div class="timeline-icon">' + (e.badge === 'HEARTBEAT' ? '⟳' : e.badge === 'SIGNAL TRIGGERED' ? '⚡' : e.badge === 'ACCELERATING' ? '↑' : e.badge === 'WATCHING' ? '◎' : e.badge === 'ERROR' ? '✕' : '●') + '</div>' +
-        '<div class="timeline-body">' +
-          '<div style="font-size:13px;color:#e8e6de;font-weight:700;">' + e.fixture + '</div>' +
-          '<div style="font-size:12px;color:#8fa2c7;margin-top:4px;">' + e.message + '</div>' +
-          '<div style="font-size:11px;color:#5f739d;margin-top:4px;">' + e.details + '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div style="text-align:right;min-width:80px;">' +
-        '<div class="timeline-badge">' + e.badge + '</div>' +
-        '<div class="timeline-time">' + new Date(e.timestamp).toLocaleTimeString() + '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
-function updateMarketPanel(info) {
-  document.getElementById('marketHeadline').textContent = info.headline;
-  document.getElementById('marketSummary').textContent = info.summary;
-  document.getElementById('marketEdge').textContent = info.edge;
-  document.getElementById('marketFocus').textContent = info.focus;
-  document.getElementById('marketRecommendation').textContent = info.recommendation;
-}
-
-function updateAcc() {
-  const legsSlider = document.getElementById('legsSlider');
-  const confSlider = document.getElementById('confSlider');
-  if (!legsSlider || !confSlider) return;
-
-  const legs = +legsSlider.value;
-  const conf = +confSlider.value / 100;
-  const legsVal = document.getElementById('legsVal');
-  const confVal = document.getElementById('confVal');
-  const slipProb = document.getElementById('slipProb');
-
-  if (legsVal) legsVal.textContent = legs;
-  if (confVal) confVal.textContent = (conf * 100).toFixed(0);
-
-  const probs = [];
-  for (let n = 1; n <= legs; n++) probs.push(Math.pow(conf, n) * 100);
-  const final = probs[probs.length - 1];
-
-  if (slipProb) {
-    slipProb.textContent = final.toFixed(2) + '%';
-    slipProb.style.color = final >= 30 ? '#3dc9b0' : final >= 10 ? '#e8a33d' : '#e85d4a';
-  }
-
-  const data = { labels: probs.map((_, i) => 'Leg ' + (i + 1)), datasets: [{ label: 'Win probability', data: probs, borderColor: '#4f9eff', backgroundColor: 'rgba(79,158,255,0.08)', tension: 0.3, pointRadius: 2, borderWidth: 2, fill: true }] };
-  if (accChart) { accChart.data = data; accChart.update(); }
-  else {
-    const ctx = document.getElementById('accChart')?.getContext('2d');
-    if (!ctx) return;
-    accChart = new Chart(ctx, { type:'line', data, options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ x:{ticks:{color:'#5c6f8f',font:{size:9}},grid:{color:'#0f172d'}}, y:{min:0,max:100,ticks:{color:'#5c6f8f',font:{size:9},callback:v=>v+'%'},grid:{color:'#0f172d'}} } } });
-  }
-}
-
-const legsSlider = document.getElementById('legsSlider');
-const confSlider = document.getElementById('confSlider');
-if (legsSlider) legsSlider.addEventListener('input', updateAcc);
-if (confSlider) confSlider.addEventListener('input', updateAcc);
-if (legsSlider && confSlider) updateAcc();
-
-function updateProofPanel(proof) {
-  const txEl = document.getElementById('proofTx');
-  const link = document.getElementById('proofLink');
-  if (!proof || !proof.transaction) {
-    if (txEl) txEl.textContent = '—';
-    if (link) { link.href = '#'; link.textContent = 'View on Solscan'; }
-    return;
-  }
-  if (txEl) txEl.textContent = proof.transaction;
-  if (link) { link.href = proof.url || '#'; link.textContent = 'Open on Solscan'; }
-}
-
-function getFlag(teamName) {
-  const codes = {
-    'Brazil': 'br', 'Japan': 'jp', 'France': 'fr', 'Sweden': 'se',
-    'Netherlands': 'nl', 'Morocco': 'ma', 'Germany': 'de', 'Paraguay': 'py',
-    'Argentina': 'ar', 'Cape Verde': 'cv', 'Ivory Coast': 'ci', 'Norway': 'no',
-    'Colombia': 'co', 'Ghana': 'gh', 'Switzerland': 'ch', 'Algeria': 'dz',
-    'USA': 'us', 'Bosnia & Herzegovina': 'ba', 'England': 'gb-eng', 'Congo DR': 'cd',
-    'Australia': 'au', 'Egypt': 'eg', 'Mexico': 'mx', 'Ecuador': 'ec',
-    'Belgium': 'be', 'Senegal': 'sn', 'Vietnam': 'vn', 'Myanmar': 'mm',
-    'Spain': 'es', 'Portugal': 'pt', 'Uruguay': 'uy', 'South Korea': 'kr',
-    'Canada': 'ca', 'Croatia': 'hr', 'Serbia': 'rs', 'Ukraine': 'ua',
-    'Poland': 'pl', 'Denmark': 'dk', 'Iran': 'ir', 'Cameroon': 'cm',
-    'Tunisia': 'tn', 'Saudi Arabia': 'sa', 'Qatar': 'qa',
-  };
-  const code = codes[teamName];
-  if (!code) return '<span style="width:20px;display:inline-block;"></span>';
-  return '<img src="https://flagcdn.com/20x15/' + code + '.png" width="20" height="15" style="border-radius:2px;vertical-align:middle;margin-right:5px;" alt="' + teamName + '">';
-}
-
-function renderFixtures(data) {
-  document.getElementById('grid').innerHTML = data.map(function(f) {
-    const s = f.signal;
-    const statusLabel = s ? s.statusLabel.replace(' ', '_') : 'STABLE';
-    const badge = f.current.inRunning
-      ? '<span class="badge LIVE">🟢 LIVE</span>'
-      : s
-        ? '<span class="badge ' + statusLabel + '">' + s.emoji + ' ' + s.statusLabel + '</span>'
-        : '<span class="badge STABLE">🟦 STABLE</span>';
-    const detailBlocks = s
-      ? '<div class="signal-grid">' +
-          '<div class="signal-pill"><strong>Magnitude</strong><span>' + s.magnitude + '%</span></div>' +
-          '<div class="signal-pill"><strong>Velocity</strong><span>' + s.velocity + 'x</span></div>' +
-          '<div class="signal-pill"><strong>Consistency</strong><span>' + s.consistency + '%</span></div>' +
-        '</div>'
-      : '';
-    const chartId = 'chart_' + f.id;
-    let card = '<div class="card">' +
-      '<div class="card-header"><div><div class="match-name">' + getFlag(f.home) + ' ' + f.home + ' vs ' + getFlag(f.away) + ' ' + f.away + '</div><div class="comp">' + f.competition + '</div></div>' + badge + '</div>' +
-      probRow(getFlag(f.home) + ' ' + f.home, f.current.homePct, s?.homeDrift, 'fill-h') +
-      probRow('Draw', f.current.drawPct, s?.drawDrift, 'fill-d') +
-      probRow(getFlag(f.away) + ' ' + f.away, f.current.awayPct, s?.awayDrift, 'fill-a') +
-      detailBlocks +
-      (s ? '<div class="signal-box ' + s.confidence + '"><div class="signal-top"><span class="signal-label">' + s.confidence + ' CONFIDENCE</span><span class="signal-score">' + s.score + '</span></div><div class="signal-reason">' + s.reason + '</div></div>' : '') +
-      (f.history.length > 1 ? '<div class="chart-wrap" style="height:88px;margin-top:14px;"><canvas id="' + chartId + '"></canvas></div>' : '') +
-    '</div>';
-    return card;
-  }).join('');
-
-  data.forEach(f => {
-    if (f.history.length > 1) renderChart('chart_' + f.id, f.history);
-  });
-}
-
-async function refresh() {
-  const d = await fetch('/data').then(r => r.json());
-  console.log('refresh()', { pollCount: d.pollCount, fixtures: d.fixtures.length, divergences: d.divergences.length });
-  document.getElementById('sPoll').textContent = d.pollCount;
-  document.getElementById('sFix').textContent = d.fixtures.length;
-  document.getElementById('sDiv').textContent = d.divergences.length;
-  document.getElementById('sTime').textContent = new Date().toLocaleTimeString();
-  if (!replayActive) liveData = d.fixtures;
-  renderFixtures(d.fixtures);
-  renderTimeline(d.timeline);
-  updateMarketPanel(d.marketIntel);
-
-  const logBody = document.getElementById('logBody');
-  if (logBody) {
-    if (!d.divergences.length) {
-      logBody.innerHTML = '<tr><td colspan="6" class="empty">Watching for divergences...</td></tr>';
-    } else {
-      logBody.innerHTML = d.divergences.slice(0, 15).map(function(e) {
-      return '<tr>' +
-        '<td>' + new Date(e.timestamp).toLocaleTimeString() + '</td>' +
-        '<td>' + e.fixture + '</td>' +
-        '<td><span class="score-pill">' + e.signal.score + '</span></td>' +
-        '<td class="conf-' + e.signal.confidence + '">' + e.signal.confidence + '</td>' +
-        '<td>' + e.signal.magnitude + '%</td>' +
-        '<td style="color:#8a96b5;max-width:260px">' + e.signal.reason + '</td>' +
-      '</tr>';
-    }).join('');
-    }
-  }
-}
-
-// ---- DEMO REPLAY MODE ----
-const REPLAY_SCRIPT = [
-  {
-    step: 1,
-    label: "Scanning",
-    duration: 8000,
-    narrative: "Engine scanning all fixtures — market stable, no signals detected.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 41.2, drawPct: 38.5, awayPct: 20.3 },
-    signal: { score: 8, confidence: "LOW", status: "STABLE", magnitude: 0.12, velocity: 1.0, consistency: 33, reason: "0.12% movement within normal noise range." }
-  },
-  {
-    step: 2,
-    label: "Watching",
-    duration: 8000,
-    narrative: "Brazil vs Japan odds beginning to shift — engine registers first movement.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 38.9, drawPct: 40.1, awayPct: 21.0 },
-    signal: { score: 32, confidence: "LOW", status: "WATCHING", magnitude: 2.3, velocity: 1.1, consistency: 66, reason: "2.3% drift detected — monitoring for continuation." }
-  },
-  {
-    step: 3,
-    label: "Accelerating",
-    duration: 8000,
-    narrative: "Movement accelerating above fixture baseline — velocity rising.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 34.1, drawPct: 43.7, awayPct: 22.2 },
-    signal: { score: 54, confidence: "MEDIUM", status: "ACCELERATING", magnitude: 6.8, velocity: 1.4, consistency: 66, reason: "6.80% smoothed drift, velocity 1.40x recent average." }
-  },
-  {
-    step: 4,
-    label: "Signal Triggered",
-    duration: 10000,
-    narrative: "⚡ SIGNAL TRIGGERED — market moving sharply beyond baseline. Divergence logged.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 28.4, drawPct: 48.2, awayPct: 23.4 },
-    signal: { score: 78, confidence: "HIGH", status: "SIGNAL_TRIGGERED", magnitude: 12.8, velocity: 1.5, consistency: 100, reason: "12.80% drift with sustained direction and velocity 1.50x." }
-  },
-  {
-    step: 5,
-    label: "Explaining",
-    duration: 8000,
-    narrative: "Engine explains the signal — breakdown visible across Magnitude, Velocity, Consistency.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 27.1, drawPct: 49.5, awayPct: 23.4 },
-    signal: { score: 81, confidence: "HIGH", status: "SIGNAL_TRIGGERED", magnitude: 14.1, velocity: 1.5, consistency: 100, reason: "14.10% drift with sustained direction and velocity 1.50x — sharp money detected." }
-  },
-  {
-    step: 6,
-    label: "Complete",
-    duration: 8000,
-    narrative: "✅ Replay complete. Engine returns to live monitoring. Divergence logged to history.",
-    fixture: "Brazil vs Japan",
-    odds: { homePct: 27.1, drawPct: 49.5, awayPct: 23.4 },
-    signal: { score: 81, confidence: "HIGH", status: "SIGNAL_TRIGGERED", magnitude: 14.1, velocity: 1.5, consistency: 100, reason: "14.10% drift confirmed across 5 consecutive polls." }
-  }
+const REPLAY_STEPS = [
+  { label:'Scanning', duration:8000, score:6, status:'STABLE', confidence:'LOW', magnitude:0.12, velocity:1.0, consistency:18, homePct:41.2, drawPct:38.5, awayPct:20.3, homeDrift:0.08, drawDrift:-0.04, awayDrift:-0.04, reason:'0.12% movement within normal noise range.' },
+  { label:'Movement Detected', duration:8000, score:28, status:'WATCHING', confidence:'LOW', magnitude:2.5, velocity:1.1, consistency:35, homePct:38.7, drawPct:40.3, awayPct:21.0, homeDrift:-2.5, drawDrift:1.8, awayDrift:0.7, reason:'2.50% smoothed drift, mixed direction — possible noise.' },
+  { label:'Accelerating', duration:8000, score:52, status:'ACCELERATING', confidence:'MEDIUM', magnitude:5.8, velocity:1.35, consistency:65, homePct:34.1, drawPct:43.8, awayPct:22.1, homeDrift:-4.6, drawDrift:3.5, awayDrift:1.1, reason:'5.80% smoothed drift, consistent direction.' },
+  { label:'Signal Triggered', duration:10000, score:76, status:'SIGNAL TRIGGERED', confidence:'HIGH', magnitude:11.2, velocity:1.5, consistency:90, homePct:28.3, drawPct:48.4, awayPct:23.3, homeDrift:-5.8, drawDrift:4.6, awayDrift:1.2, reason:'11.20% smoothed shift, velocity 1.50x recent average.' },
+  { label:'Explaining', duration:8000, score:81, status:'SIGNAL TRIGGERED', confidence:'HIGH', magnitude:13.4, velocity:1.5, consistency:90, homePct:27.0, drawPct:49.7, awayPct:23.3, homeDrift:-1.3, drawDrift:1.3, awayDrift:0.0, reason:'13.40% smoothed shift confirmed — sharp money detected.' },
+  { label:'Complete', duration:6000, score:81, status:'SIGNAL TRIGGERED', confidence:'HIGH', magnitude:13.4, velocity:1.5, consistency:90, homePct:27.0, drawPct:49.7, awayPct:23.3, homeDrift:0, drawDrift:0, awayDrift:0, reason:'13.40% shift confirmed across 5 consecutive polls.' },
 ];
 
-function runReplayStep(stepIndex) {
-  if (stepIndex >= REPLAY_SCRIPT.length) {
-    // Replay complete — restore live data
-    endReplay();
-    return;
+function getStatusColor(status) {
+  if (status === 'SIGNAL TRIGGERED') return 'text-pink-400 bg-pink-400/10 border-pink-400/30 shadow-[0_0_15px_rgba(236,72,153,0.2)]';
+  if (status === 'ACCELERATING') return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
+  if (status === 'WATCHING') return 'text-amber-400 bg-amber-400/10 border-amber-400/20';
+  return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+}
+
+function getScoreColor(score) {
+  if (score >= 70) return 'text-pink-400 drop-shadow-[0_0_8px_rgba(236,72,153,0.8)]';
+  if (score >= 50) return 'text-orange-400';
+  if (score >= 30) return 'text-amber-400';
+  return 'text-emerald-400';
+}
+
+function getBarColor(val) {
+  if (val > 80) return 'bg-pink-500';
+  if (val > 60) return 'bg-orange-500';
+  if (val > 30) return 'bg-amber-400';
+  return 'bg-emerald-400';
+}
+
+function FixtureCard({ fixture }) {
+  const isTriggered = fixture.status === 'SIGNAL TRIGGERED';
+  const mag = Math.min(100, Math.round((fixture.signal?.magnitude || 0) * 6));
+  const vel = Math.min(100, Math.max(0, Math.round(((fixture.signal?.velocity || 1) - 1) * 200)));
+  const con = fixture.signal?.consistency || 0;
+
+  return (
+    <div className={"bg-slate-900 border rounded-xl p-5 transition-all duration-500 " + (isTriggered ? 'border-pink-500 shadow-[0_0_24px_rgba(236,72,153,0.15)]' : 'border-slate-800')}>
+      <div className="flex flex-col md:flex-row justify-between md:items-center mb-5 gap-3">
+        <div className="flex items-center gap-2 text-lg font-bold text-white flex-wrap">
+          <FlagImg team={fixture.home}/>{fixture.home}
+          <span className="text-slate-500 font-normal text-sm">vs</span>
+          <FlagImg team={fixture.away}/>{fixture.away}
+          {fixture.competition && <span className="text-xs font-normal text-slate-500 ml-1">{fixture.competition}</span>}
+        </div>
+        <div className={"px-3 py-1 rounded-md text-xs font-bold border tracking-wider flex items-center gap-1 w-max " + getStatusColor(fixture.status)}>
+          {isTriggered && <span>⚡</span>}
+          {fixture.status || 'STABLE'}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+        <div className="md:col-span-3 flex flex-col items-center justify-center p-4 bg-slate-950 rounded-lg border border-slate-800">
+          <span className="text-slate-400 text-xs font-medium mb-1 uppercase tracking-wider">Signal Score</span>
+          <div className={"text-4xl font-mono font-bold " + getScoreColor(fixture.signal?.score || 0)}>
+            {fixture.signal?.score || 0}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">{fixture.signal?.confidence || 'LOW'}</div>
+        </div>
+
+        <div className="md:col-span-9 space-y-3">
+          {[
+            { label:'Magnitude', val: mag },
+            { label:'Velocity', val: vel },
+            { label:'Consistency', val: con },
+          ].map(m => (
+            <div key={m.label} className="flex items-center gap-3">
+              <span className="w-24 text-xs font-mono text-slate-400">{m.label}</span>
+              <div className="flex-grow h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div className={"h-full transition-all duration-700 " + getBarColor(m.val)} style={{width: m.val + '%'}}/>
+              </div>
+              <span className="w-8 text-right text-xs font-mono text-white">{m.val}</span>
+            </div>
+          ))}
+
+          <div className="pt-3 border-t border-slate-800/50 space-y-2">
+            {[
+              { team: fixture.home, pct: fixture.current?.homePct, drift: fixture.signal?.homeDrift, color:'text-amber-400' },
+              { team: 'Draw', pct: fixture.current?.drawPct, drift: fixture.signal?.drawDrift, color:'text-slate-400' },
+              { team: fixture.away, pct: fixture.current?.awayPct, drift: fixture.signal?.awayDrift, color:'text-emerald-400' },
+            ].map(r => (
+              <div key={r.team} className="flex items-center gap-2">
+                <span className={"text-xs w-28 " + r.color}>{r.team}</span>
+                <div className="flex-grow h-1 bg-slate-800 rounded-full overflow-hidden">
+                  <div className={"h-full " + (r.team === 'Draw' ? 'bg-slate-500' : r.team === fixture.home ? 'bg-amber-400' : 'bg-emerald-400')} style={{width: Math.min(r.pct || 0, 100) + '%'}}/>
+                </div>
+                <span className="text-xs text-white font-mono w-12 text-right">{(r.pct || 0).toFixed(2)}%</span>
+                {r.drift !== null && r.drift !== undefined && Math.abs(r.drift) > 0.05 && (
+                  <span className={"text-xs font-mono " + (r.drift > 0 ? 'text-emerald-400' : 'text-red-400')}>
+                    {r.drift > 0 ? '▲' : '▼'}{Math.abs(r.drift).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {fixture.signal?.reason && (
+            <div className="flex items-start gap-2 pt-2 border-t border-slate-800/50">
+              <span className="text-slate-500 text-xs mt-0.5">›</span>
+              <p className="text-xs text-slate-400 italic">{fixture.signal.reason}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RiskLab() {
+  const [mode, setMode] = useState('degen');
+  const [accumLegs, setAccumLegs] = useState(5);
+  const [baseConfidence, setBaseConfidence] = useState(80);
+
+  const combinedProb = (Math.pow(baseConfidence / 100, accumLegs) * 100).toFixed(1);
+  const smartProb = (Math.pow(baseConfidence / 100, 1) * 100).toFixed(1);
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <h2 className="font-bold text-white flex items-center gap-2 mb-2">
+        <span className="text-blue-400">◈</span> Signal-to-Strategy Risk Lab
+      </h2>
+      <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+        The engine identifies strong individual signals. See how strategy structure affects your edge.
+      </p>
+
+      <div className="flex gap-2 mb-5">
+        <button
+          onClick={() => setMode('degen')}
+          className={"flex-1 py-2 text-xs font-bold rounded border transition-colors " +
+            (mode === 'degen'
+              ? 'bg-red-500/20 border-red-400/50 text-red-400'
+              : 'border-slate-700 text-slate-500 hover:border-slate-500')}>
+          🎰 Degen Mode
+        </button>
+        <button
+          onClick={() => setMode('smart')}
+          className={"flex-1 py-2 text-xs font-bold rounded border transition-colors " +
+            (mode === 'smart'
+              ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-400'
+              : 'border-slate-700 text-slate-500 hover:border-slate-500')}>
+          🧠 Smart Money Mode
+        </button>
+      </div>
+
+      {mode === 'degen' ? (
+        <div className="space-y-5">
+          <p className="text-xs text-red-400/80 bg-red-500/10 border border-red-500/20 rounded p-3">
+            Stacking multiple legs feels exciting — but each leg multiplies your risk. Watch what happens to your edge.
+          </p>
+          <div>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-slate-400">Base Signal Confidence</span>
+              <span className="text-white font-mono">{baseConfidence}%</span>
+            </div>
+            <input type="range" min="50" max="95" value={baseConfidence}
+              onChange={e => setBaseConfidence(+e.target.value)} className="w-full accent-red-500"/>
+          </div>
+          <div>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-slate-400">Legs Stacked</span>
+              <span className="text-white font-mono">{accumLegs}</span>
+            </div>
+            <input type="range" min="1" max="15" value={accumLegs}
+              onChange={e => setAccumLegs(+e.target.value)} className="w-full accent-red-500"/>
+          </div>
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 text-center">
+            <span className="text-slate-500 text-xs uppercase tracking-wider block mb-1">Combined Probability</span>
+            <span className={"text-3xl font-bold font-mono " + (+combinedProb >= 30 ? 'text-emerald-400' : +combinedProb >= 10 ? 'text-amber-400' : 'text-red-400')}>
+              {combinedProb}%
+            </span>
+          </div>
+          {accumLegs > 4 && (
+            <div className="text-xs text-red-400 bg-red-500/10 p-3 rounded border border-red-500/20">
+              ⚠ {accumLegs} legs at {baseConfidence}% confidence = {combinedProb}% chance of winning. The house wins.
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={() => setBaseConfidence(95)} className="flex-1 py-2 text-xs border border-slate-700 rounded text-slate-400 hover:border-red-400 hover:text-red-400 transition-colors">Optimistic (95%)</button>
+            <button onClick={() => setBaseConfidence(75)} className="flex-1 py-2 text-xs border border-slate-700 rounded text-slate-400 hover:border-red-400 hover:text-red-400 transition-colors">Conservative (75%)</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <p className="text-xs text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded p-3">
+            Smart money uses high-confidence single signals. The Divergence Engine tells you exactly where the edge is — act on one signal at a time.
+          </p>
+          <div>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-slate-400">Engine Signal Confidence</span>
+              <span className="text-white font-mono">{baseConfidence}%</span>
+            </div>
+            <input type="range" min="50" max="95" value={baseConfidence}
+              onChange={e => setBaseConfidence(+e.target.value)} className="w-full accent-emerald-500"/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-950 border border-red-500/20 rounded-lg p-4 text-center">
+              <span className="text-red-400 text-xs uppercase tracking-wider block mb-1">Degen (5 legs)</span>
+              <span className="text-2xl font-bold font-mono text-red-400">
+                {(Math.pow(baseConfidence / 100, 5) * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div className="bg-slate-950 border border-emerald-500/20 rounded-lg p-4 text-center">
+              <span className="text-emerald-400 text-xs uppercase tracking-wider block mb-1">Smart (1 signal)</span>
+              <span className="text-2xl font-bold font-mono text-emerald-400">
+                {smartProb}%
+              </span>
+            </div>
+          </div>
+          <div className="text-xs text-emerald-400/80 bg-emerald-500/10 p-3 rounded border border-emerald-500/20">
+            ✓ Single high-confidence signal preserves {(baseConfidence - (Math.pow(baseConfidence / 100, 5) * 100)).toFixed(1)}% more edge than a 5-leg accumulator.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [liveData, setLiveData] = useState({ pollCount:0, fixtures:[], divergences:[] });
+  const [events, setEvents] = useState([{ id:1, time: new Date().toLocaleTimeString(), text:'Engine initialized. Connecting to TxLINE...', type:'system' }]);
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replayLabel, setReplayLabel] = useState('');
+  const [replayFixture, setReplayFixture] = useState(null);
+  const eventsEndRef = useRef(null);
+  const replayTimerRef = useRef(null);
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (eventsEndRef.current) {
+      const container = eventsEndRef.current.parentElement;
+      if (container) {
+        requestAnimationFrame(() => {
+          container.scrollTop = container.scrollHeight;
+        });
+      }
+    }
+  }, [events]);
+
+  async function fetchData() {
+    try {
+      const d = await fetch('/data').then(r => r.json());
+      setLiveData(d);
+      d.fixtures.forEach(f => {
+        if (f.signal && f.signal.confidence === 'HIGH') {
+          addEvent(f.home + ' vs ' + f.away + ': HIGH signal fired — ' + f.signal.reason, 'high');
+        } else if (f.signal && f.signal.confidence === 'MEDIUM') {
+          addEvent(f.home + ' vs ' + f.away + ': MEDIUM signal — ' + f.signal.reason, 'medium');
+        }
+      });
+      addEvent('Poll #' + d.pollCount + ' complete — ' + d.fixtures.length + ' fixtures active.', 'system');
+    } catch(e) {}
   }
 
-  const step = REPLAY_SCRIPT[stepIndex];
-  replayPhase = stepIndex + 1;
-
-  // Update status bar
-  document.getElementById('replayStatus').textContent = step.label;
-  document.getElementById('replayStep').textContent = step.step + '/6';
-
-  // Add countdown
-  let remaining = Math.floor(step.duration / 1000);
-  document.getElementById('replayRemaining').textContent = remaining + 's';
-  const countdownInterval = setInterval(() => {
-    remaining--;
-    document.getElementById('replayRemaining').textContent = remaining + 's';
-    if (remaining <= 0) clearInterval(countdownInterval);
-  }, 1000);
-
-  // Build fake fixture data for this step
-  const fakeFixture = {
-    id: 99999,
-    name: '🇧🇷 Brazil vs 🇯🇵 Japan',
-    home: 'Brazil',
-    away: 'Japan',
-    competition: 'World Cup — DEMO REPLAY',
-    current: {
-      homePct: step.odds.homePct,
-      drawPct: step.odds.drawPct,
-      awayPct: step.odds.awayPct,
-      inRunning: false,
-    },
-    signal: step.signal,
-    history: [],
-    proof: { transaction: 'N/A', url: '#' }
-  };
-
-  // Build history for chart (simulated movement)
-  const historyPoints = [];
-  for (let i = 6; i >= 0; i--) {
-    historyPoints.push({
-      homePct: step.odds.homePct + (i * 2.1),
-      drawPct: step.odds.drawPct - (i * 1.8),
-      awayPct: step.odds.awayPct - (i * 0.3),
+  function addEvent(text, type) {
+    setEvents(prev => {
+      const updated = [...prev, { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), text, type: type || 'system' }];
+      return updated.slice(-40);
     });
   }
-  fakeFixture.history = historyPoints;
 
-  // Inject fake data into grid (keep real fixtures, add replay fixture first)
-  const replayData = [fakeFixture, ...(savedLiveData || [])];
-  renderFixtures(replayData);
-
-  // Add timeline event
-  const timelineEntry = {
-    timestamp: new Date().toISOString(),
-    fixture: 'Brazil vs Japan',
-    icon: step.signal.status === 'SIGNAL_TRIGGERED' ? '⚡' : step.signal.status === 'ACCELERATING' ? '↑' : step.signal.status === 'WATCHING' ? '◎' : '●',
-    badge: step.label.toUpperCase(),
-    message: step.narrative,
-    details: step.signal.reason,
-  };
-
-  // Prepend to timeline
-  const feed = document.getElementById('timelineFeed');
-  const entry = document.createElement('div');
-  entry.className = 'timeline-entry';
-  entry.style.background = step.signal.status === 'SIGNAL_TRIGGERED' ? 'rgba(255,100,50,0.05)' : 'transparent';
-  entry.innerHTML =
-    '<div class="timeline-meta" style="display:flex;gap:10px;align-items:flex-start;">' +
-      '<div class="timeline-icon">' + timelineEntry.icon + '</div>' +
-      '<div class="timeline-body">' +
-        '<div class="timeline-fixture">' + timelineEntry.fixture + '</div>' +
-        '<div class="timeline-msg">' + timelineEntry.message + '</div>' +
-        '<div class="timeline-detail">' + timelineEntry.details + '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div class="timeline-right">' +
-      '<div class="timeline-badge">' + timelineEntry.badge + '</div>' +
-      '<div class="timeline-time">' + new Date().toLocaleTimeString() + '</div>' +
-    '</div>';
-  if (feed.firstChild) {
-    feed.insertBefore(entry, feed.firstChild);
-  } else {
-    feed.appendChild(entry);
+  function startReplay() {
+    if (isReplaying) return;
+    setIsReplaying(true);
+    setReplayLabel('Starting');
+    addEvent('REPLAY MODE: Injecting sample market shock — Brazil vs Japan.', 'high');
+    runStep(0);
   }
 
-  // If signal triggered — add to divergence log
-  if (step.signal.status === 'SIGNAL_TRIGGERED') {
-    const logBody = document.getElementById('logBody');
-    const row = document.createElement('tr');
-    row.style.background = 'rgba(255,100,50,0.05)';
-    row.innerHTML =
-      '<td>' + new Date().toLocaleTimeString() + '</td>' +
-      '<td>🇧🇷 Brazil vs 🇯🇵 Japan (REPLAY)</td>' +
-      '<td><span class="score-pill">' + step.signal.score + '</span></td>' +
-      '<td class="conf-HIGH">HIGH</td>' +
-      '<td>' + step.signal.magnitude + '%</td>' +
-      '<td style="color:#8a96b5;max-width:260px">' + step.signal.reason + '</td>';
-    if (logBody.querySelector('.empty')) logBody.innerHTML = '';
-    logBody.insertBefore(row, logBody.firstChild);
+  function stopReplay() {
+    if (replayTimerRef.current) clearTimeout(replayTimerRef.current);
+    setIsReplaying(false);
+    setReplayFixture(null);
+    setReplayLabel('');
+    addEvent('Replay stopped. Returning to live monitoring.', 'system');
   }
 
-  // Scroll replay fixture into view
-  const cards = document.querySelectorAll('.card');
-  if (cards[0]) cards[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  function runStep(index) {
+    if (index >= REPLAY_STEPS.length) {
+      setTimeout(() => {
+        setIsReplaying(false);
+        setReplayFixture(null);
+        setReplayLabel('');
+        addEvent('Replay complete. Engine returning to live monitoring.', 'system');
+      }, 2000);
+      return;
+    }
+    const step = REPLAY_STEPS[index];
+    setReplayLabel(step.label);
+    setReplayFixture({
+      id: 99999,
+      home: 'Brazil',
+      away: 'Japan',
+      competition: 'World Cup — DEMO REPLAY',
+      status: step.status,
+      current: { homePct: step.homePct, drawPct: step.drawPct, awayPct: step.awayPct, inRunning: index >= 3 },
+      signal: { score: step.score, confidence: step.confidence, reason: step.reason, homeDrift: step.homeDrift, drawDrift: step.drawDrift, awayDrift: step.awayDrift, magnitude: step.magnitude, velocity: step.velocity, consistency: step.consistency },
+    });
+    addEvent('REPLAY [' + step.label + ']: Brazil vs Japan — score ' + step.score + ' (' + step.confidence + ')', step.confidence === 'HIGH' ? 'high' : step.confidence === 'MEDIUM' ? 'medium' : 'system');
+    replayTimerRef.current = setTimeout(() => runStep(index + 1), step.duration);
+  }
 
-  // Schedule next step
-  replayTimer = setTimeout(() => runReplayStep(stepIndex + 1), step.duration);
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-300 font-sans">
+      <header className="border-b border-slate-800 bg-slate-900/60 pt-6 pb-5 px-6 sticky top-0 z-10 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div className="flex items-center gap-3">
+            <svg width="32" height="32" viewBox="0 0 34 34" fill="none">
+              <path d="M4 17 L14 17 L20 8" stroke="#E8A33D" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M4 17 L14 17 L20 26" stroke="#3DC9B0" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="4" cy="17" r="2.5" fill="#E8E6DE"/>
+            </svg>
+            <div>
+              <h1 className="text-2xl font-bold text-white tracking-tight">Divergence Engine</h1>
+              <p className="text-slate-500 text-xs mt-0.5">AUTONOMOUS MARKET INTELLIGENCE · TXODDS × SOLANA DEVNET</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-2">
+              <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-center min-w-16">
+                <div className="text-lg font-bold text-amber-400">{liveData.pollCount}</div>
+                <div className="text-xs text-slate-500">POLLS</div>
+              </div>
+              <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-center min-w-16">
+                <div className="text-lg font-bold text-amber-400">{liveData.fixtures.length}</div>
+                <div className="text-xs text-slate-500">FIXTURES</div>
+              </div>
+              <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-center min-w-16">
+                <div className="text-lg font-bold text-red-400">{liveData.divergences.length}</div>
+                <div className="text-xs text-slate-500">DIVERGENCES</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-emerald-400/10 border border-emerald-400/25 rounded-lg text-emerald-400 text-xs font-bold">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block"/>
+              LIVE
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+            <div>
+              <h3 className="text-white font-semibold flex items-center gap-2 mb-4 text-sm">
+                <span className="text-emerald-400">⛓</span> TxLINE On-Chain Proof
+              </h3>
+              <div className="space-y-2 text-xs text-slate-400 font-mono">
+                <div className="flex justify-between"><span className="text-slate-500">Network</span><span className="text-white">Solana Devnet</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="text-emerald-400 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block"/>Active</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Feed</span><span className="text-white">TxLINE World Cup 2026</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Interval</span><span className="text-white">60 seconds</span></div>
+              </div>
+              <div className="mt-3 p-2 bg-slate-950 rounded border border-slate-800 text-xs text-slate-500 font-mono break-all leading-relaxed">
+                {TXSIG}
+              </div>
+            </div>
+            <a href={"https://solscan.io/tx/" + TXSIG + "?cluster=devnet"} target="_blank"
+               className="mt-4 w-full flex items-center justify-center gap-2 py-2 bg-emerald-400/8 hover:bg-emerald-400/15 border border-emerald-400/25 text-emerald-400 rounded text-xs font-bold transition-colors">
+              View on Solscan →
+            </a>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col">
+            <h3 className="text-white font-semibold flex items-center gap-2 mb-2 text-sm">
+              <span className="text-cyan-400">▸</span> Market Intelligence API Preview
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">Products can consume this signal layer to power alerts, dashboards, or trading tools.</p>
+            <div className="bg-slate-950 rounded-lg p-4 border border-slate-800 flex-grow font-mono text-xs overflow-x-auto">
+              <pre className="text-emerald-400">{JSON.stringify({
+                fixture: liveData.fixtures[0] ? liveData.fixtures[0].home + " vs " + liveData.fixtures[0].away : "Waiting...",
+                signalScore: liveData.fixtures[0]?.signal?.score || 0,
+                confidence: liveData.fixtures[0]?.signal?.confidence || "LOW",
+                magnitude: liveData.fixtures[0]?.signal?.magnitude || 0,
+                velocity: liveData.fixtures[0]?.signal?.velocity || 1.0,
+                reason: liveData.fixtures[0]?.signal?.reason || "Initializing..."
+              }, null, 2)}</pre>
+            </div>
+            <div className="mt-3 p-3 bg-slate-900 rounded border border-slate-700">
+              <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Quick Integration</div>
+              <pre className="text-cyan-400 text-xs overflow-x-auto">{'curl https://divergence-engine-production.up.railway.app/data -H "Accept: application/json"'}</pre>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Demo Replay Mode</div>
+              <h3 className="text-white font-bold text-lg">60s animated market walkthrough</h3>
+              <p className="text-xs text-slate-500 mt-1">Watch the engine detect a live market shock — odds shift, signal fires, divergence logged.</p>
+              {isReplaying && <div className="text-xs text-pink-400 mt-2 animate-pulse">● REPLAYING: {replayLabel}</div>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={startReplay} disabled={isReplaying}
+                className={"px-5 py-2 rounded-lg text-sm font-bold transition-all border " + (isReplaying ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed' : 'bg-pink-600 hover:bg-pink-500 text-white border-pink-400 shadow-[0_0_15px_rgba(236,72,153,0.3)]')}>
+                {isReplaying ? 'Replaying...' : '▶ Launch Replay'}
+              </button>
+              {isReplaying && (
+                <button onClick={stopReplay} className="px-5 py-2 rounded-lg text-sm font-bold border border-red-400/40 text-red-400 hover:bg-red-400/10 transition-colors">
+                  ■ Stop
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {replayFixture && (
+          <div>
+            <h2 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+              <span className="text-pink-400 animate-pulse">●</span>
+              Demo Replay
+              <span className="text-xs font-normal text-slate-500 font-mono">— recorded sample data, not live</span>
+            </h2>
+            <FixtureCard fixture={replayFixture}/>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="lg:col-span-2">
+            <h2 className="text-lg font-bold text-white mb-3">Live Fixtures</h2>
+            {liveData.fixtures.length === 0
+              ? <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-slate-500 text-sm">No fixtures with live odds right now — engine is polling...</div>
+              : <div className="space-y-4">{liveData.fixtures.map(f => <FixtureCard key={f.id} fixture={{...f, status: f.signal ? (f.signal.confidence === 'HIGH' ? 'SIGNAL TRIGGERED' : f.signal.confidence === 'MEDIUM' ? 'WATCHING' : 'STABLE') : 'STABLE'}}/>)}</div>
+            }
+          </div>
+
+          <div className="lg:col-span-1">
+            <h2 className="text-lg font-bold text-white mb-3">Signal Timeline</h2>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col overflow-hidden" style={{height:'500px'}}>
+              <div className="flex-grow overflow-y-auto min-h-0 p-4 custom-scrollbar space-y-3 font-mono text-xs">
+                {events.map(e => (
+                  <div key={e.id} className="flex gap-2 items-start animate-fade-in">
+                    <span className="text-slate-600 flex-shrink-0">{e.time}</span>
+                    <span className={e.type === 'high' ? 'text-pink-400 font-bold' : e.type === 'medium' ? 'text-amber-400' : 'text-slate-400'}>{e.text}</span>
+                  </div>
+                ))}
+                <div ref={eventsEndRef}/>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <RiskLab/>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-slate-800">
+              <h2 className="font-bold text-white">Divergence Log</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-slate-800">
+                  <th className="text-left p-3 text-slate-500 uppercase tracking-wider">Time</th>
+                  <th className="text-left p-3 text-slate-500 uppercase tracking-wider">Fixture</th>
+                  <th className="text-left p-3 text-slate-500 uppercase tracking-wider">Score</th>
+                  <th className="text-left p-3 text-slate-500 uppercase tracking-wider">Confidence</th>
+                  <th className="text-left p-3 text-slate-500 uppercase tracking-wider">Reason</th>
+                </tr></thead>
+                <tbody>
+                  {liveData.divergences.length === 0
+                    ? <tr><td colSpan="5" className="text-center p-8 text-slate-600">Watching for divergences...</td></tr>
+                    : liveData.divergences.slice(0,10).map((d,i) => (
+                      <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                        <td className="p-3 text-slate-500 font-mono">{new Date(d.timestamp).toLocaleTimeString()}</td>
+                        <td className="p-3 text-slate-300">{d.fixture}</td>
+                        <td className="p-3"><span className="bg-slate-800 px-2 py-0.5 rounded font-mono text-white">{d.signal?.score}</span></td>
+                        <td className={"p-3 font-bold " + (d.signal?.confidence === 'HIGH' ? 'text-pink-400' : d.signal?.confidence === 'MEDIUM' ? 'text-amber-400' : 'text-slate-400')}>{d.signal?.confidence}</td>
+                        <td className="p-3 text-slate-500 max-w-xs truncate">{d.signal?.reason}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer className="text-center py-4 text-slate-700 text-xs border-t border-slate-900 mt-6">
+        Divergence Engine v1.0 · Built on TxLINE × Solana Devnet · TxODDS Hackathon 2026
+      </footer>
+    </div>
+  );
 }
 
-function endReplay() {
-  replayActive = false;
-  replayTimer = null;
-  document.getElementById('replayStatus').textContent = 'Complete';
-  document.getElementById('replayStep').textContent = '6/6';
-  document.getElementById('replayRemaining').textContent = '--s';
-  document.getElementById('demoReplayBtn').textContent = 'Launch replay';
-  document.getElementById('demoReplayBtn').disabled = false;
-
-  // Restore live fixtures after 3 seconds
-  setTimeout(() => {
-    if (savedLiveData) renderFixtures(savedLiveData);
-    document.getElementById('replayStatus').textContent = 'Idle';
-    document.getElementById('replayStep').textContent = '0/6';
-  }, 3000);
-}
-
-function startReplay() {
-  if (replayActive) return;
-  replayActive = true;
-
-  // Save current live data so we can restore it after
-  savedLiveData = [...liveData];
-
-  document.getElementById('demoReplayBtn').textContent = 'Replaying...';
-  document.getElementById('demoReplayBtn').disabled = true;
-  document.getElementById('replayStatus').textContent = 'Starting';
-  document.getElementById('replayStep').textContent = '0/6';
-
-  // Small delay before first step so judges can see it starting
-  setTimeout(() => runReplayStep(0), 800);
-}
-
-document.getElementById('demoReplayBtn').addEventListener('click', startReplay);
-
-refresh();
-setInterval(refresh, 10000);
-</script>
+ReactDOM.render(<App/>, document.getElementById('root'));
+<\/script>
 </body>
 </html>`;
 
-const server = http.createServer((req, res) => {
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(function(req, res) {
   if (req.url === "/data") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ pollCount, fixtures: liveData, divergences: divergenceLog, timeline: eventTimeline, marketIntel }));
+    res.end(JSON.stringify({ pollCount: pollCount, fixtures: liveData, divergences: divergenceLog }));
     return;
   }
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(html);
 });
 
-server.listen(3000, () => {
+server.listen(PORT, function() {
   console.log("\n+------------------------------------------+");
-  console.log("�   DIVERGENCE ENGINE � Web Dashboard      �");
-  console.log("�------------------------------------------�");
-  console.log("�   Open: http://localhost:3000            �");
+  console.log("|   DIVERGENCE ENGINE - Web Dashboard      |");
+  console.log("|   Open: http://localhost:" + PORT + "            |");
   console.log("+------------------------------------------+\n");
 });
 

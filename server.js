@@ -755,7 +755,8 @@ ReactDOM.render(<App/>, document.getElementById('root'));
 </body>
 </html>`;
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || "0.0.0.0";
 
 const server = http.createServer(function(req, res) {
   if (req.url === "/data") {
@@ -767,7 +768,7 @@ const server = http.createServer(function(req, res) {
   res.end(html);
 });
 
-server.listen(PORT, function() {
+server.listen(PORT, HOST, function() {
   console.log("\n+------------------------------------------+");
   console.log("|   DIVERGENCE ENGINE - Web Dashboard      |");
   console.log("|   Open: http://localhost:" + PORT + "            |");

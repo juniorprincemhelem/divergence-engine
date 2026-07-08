@@ -1,4 +1,4 @@
-require("dotenv").config();
+﻿require("dotenv").config();
 
 const axios = require("axios");
 const fs = require("fs");
@@ -396,7 +396,7 @@ function RiskLab() {
             (mode === 'degen'
               ? 'bg-red-500/20 border-red-400/50 text-red-400'
               : 'border-slate-700 text-slate-500 hover:border-slate-500')}>
-          🎰 Degen Mode
+          ⚡ Degen Mode
         </button>
         <button
           onClick={() => setMode('smart')}
@@ -404,7 +404,7 @@ function RiskLab() {
             (mode === 'smart'
               ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-400'
               : 'border-slate-700 text-slate-500 hover:border-slate-500')}>
-          🧠 Smart Money Mode
+          ◆ Smart Money Mode
         </button>
       </div>
 

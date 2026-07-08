@@ -306,7 +306,11 @@ function FixtureCard({ fixture }) {
           {fixture.competition && <span className="text-xs font-normal text-slate-500 ml-1">{fixture.competition}</span>}
         </div>
         <div className={"px-3 py-1 rounded-md text-xs font-bold border tracking-wider flex items-center gap-1 w-max " + getStatusColor(fixture.status)}>
-          {isTriggered && <span>⚡</span>}
+          {isTriggered && (
+            <svg viewBox="0 0 24 24" className="w-4 h-4 inline-block text-pink-500 animate-pulse" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+            </svg>
+          )}
           {fixture.status || 'STABLE'}
         </div>
       </div>

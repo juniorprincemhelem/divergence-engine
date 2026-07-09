@@ -481,6 +481,75 @@ function RiskLab() {
   );
 }
 
+// NEW: Signal Explorer component - fetches and displays API data
+function SignalExplorer() {
+  const [signals, setSignals] = useState([]);
+  const [volatility, setVolatility] = useState({});
+  const [leaderboard, setLeaderboard] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/signals/latest').then(r => r.json()).then(setSignals).catch(() => {});
+    fetch('/api/volatility').then(r => r.json()).then(setVolatility).catch(() => {});
+    fetch('/api/leaderboard').then(r => r.json()).then(setLeaderboard).catch(() => {});
+  }, []);
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h3 className="text-white font-semibold flex items-center gap-2 mb-3 text-sm">
+          <span className="text-pink-400">⚡</span> Latest Signals
+        </h3>
+        <div className="space-y-2 text-xs font-mono max-h-40 overflow-y-auto custom-scrollbar">
+          {signals.length === 0
+            ? <div className="text-slate-600">No signals yet...</div>
+            : signals.map((s, i) => (
+              <div key={i} className="flex justify-between items-center p-2 bg-slate-950 rounded border border-slate-800">
+                <span className="text-slate-400 truncate">{s.fixture}</span>
+                <span className={"px-2 py-0.5 rounded font-bold " + (s.score >= 70 ? 'text-pink-400' : s.score >= 50 ? 'text-orange-400' : 'text-amber-400')}>{s.score}</span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h3 className="text-white font-semibold flex items-center gap-2 mb-3 text-sm">
+          <span className="text-amber-400">◈</span> Volatility Snapshot
+        </h3>
+        <div className="space-y-2 text-xs font-mono">
+          {Object.entries(volatility).slice(0, 3).map(([id, v]) => (
+            <div key={id} className="space-y-1">
+              <div className="flex justify-between text-slate-500">
+                <span>Home: {(v.homeMin || 0).toFixed(1)}% → {(v.home || 0).toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between text-slate-500">
+                <span>Away: {(v.awayMin || 0).toFixed(1)}% → {(v.away || 0).toFixed(1)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h3 className="text-white font-semibold flex items-center gap-2 mb-3 text-sm">
+          <span className="text-emerald-400">▸</span> Leaderboard (24h)
+        </h3>
+        <div className="space-y-2 text-xs font-mono">
+          {leaderboard.length === 0
+            ? <div className="text-slate-600">No data yet...</div>
+            : leaderboard.map((s, i) => (
+              <div key={i} className="flex justify-between items-center">
+                <span className="text-slate-400 truncate">{i+1}. {s.fixture}</span>
+                <span className="text-pink-400 font-bold">{s.score}</span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [liveData, setLiveData] = useState({ pollCount:0, fixtures:[], divergences:[] });
   const [events, setEvents] = useState([{ id:1, time: new Date().toLocaleTimeString(), text:'Engine initialized. Connecting to TxLINE...', type:'system' }]);
@@ -688,6 +757,9 @@ function App() {
             <FixtureCard fixture={replayFixture}/>
           </div>
         )}
+
+        {/* Signal Explorer - NEW FEATURE */}
+        <SignalExplorer/>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2">

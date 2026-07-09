@@ -1081,16 +1081,62 @@ const landingHtml = `<!DOCTYPE html>
 </html>`;
 
 const server = http.createServer(function(req, res) {
+  // API: return live data
   if (req.url === "/data") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ pollCount: pollCount, fixtures: liveData, divergences: divergenceLog }));
     return;
   }
+  // API: most recent divergences for dashboard widgets
+  if (req.url.startsWith("/api/signals/latest")) {
+    const latest = divergenceLog.slice(0, 10).map(d => ({
+      fixture: d.fixture,
+      fixtureId: d.fixtureId,
+      timestamp: d.timestamp,
+      score: d.signal?.score,
+      confidence: d.signal?.confidence,
+    }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(latest));
+    return;
+  }
+  // API: volatility per fixture (max/min odds over all recorded history)
+  if (req.url.startsWith("/api/volatility")) {
+    const vol = {};
+    Object.entries(oddsHistory).forEach(([id, history]) => {
+      const home = history.map(h => h.homePct).reduce((a, b) => Math.max(a, b), 0);
+      const homeMin = history.map(h => h.homePct).reduce((a, b) => Math.min(a, b), 1);
+      const draw = history.map(h => h.drawPct).reduce((a, b) => Math.max(a, b), 0);
+      const drawMin = history.map(h => h.drawPct).reduce((a, b) => Math.min(a, b), 1);
+      const away = history.map(h => h.awayPct).reduce((a, b) => Math.max(a, b), 0);
+      const awayMin = history.map(h => h.awayPct).reduce((a, b) => Math.min(a, b), 1);
+      vol[id] = { home, homeMin, draw, drawMin, away, awayMin };
+    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(vol));
+    return;
+  }
+  // API: leaderboard
+  if (req.url.startsWith("/api/leaderboard")) {
+    const now = Date.now();
+    const twentyFourH = 24 * 60 * 60 * 1000;
+    const recent = divergenceLog.filter(d => now - new Date(d.timestamp).getTime() <= twentyFourH);
+    const sorted = recent.sort((a, b) => (b.signal?.score || 0) - (a.signal?.score || 0)).slice(0,3).map(d => ({
+      fixture: d.fixture,
+      score: d.signal?.score,
+      timestamp: d.timestamp,
+    }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(sorted));
+    return;
+  }
+  // /app returns dashboard page
   if (req.url === "/app") {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
     return;
   }
+  // root returns landing page
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(landingHtml);
 });

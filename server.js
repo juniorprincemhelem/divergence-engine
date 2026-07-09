@@ -586,6 +586,9 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
+            <a href="/" className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-400 text-xs hover:bg-slate-700 transition-colors">
+              ← Landing Page
+            </a>
             <div className="flex gap-2">
               <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-center min-w-16">
                 <div className="text-lg font-bold text-amber-400">{liveData.pollCount}</div>
@@ -762,14 +765,334 @@ ReactDOM.render(<App/>, document.getElementById('root'));
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 
+const landingHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Divergence Engine — Autonomous Market Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#080b14;color:#d4d8f0;font-family:'JetBrains Mono',monospace;min-height:100vh}
+  a{text-decoration:none}
+
+  /* NAV */
+  nav{display:flex;align-items:center;justify-content:space-between;padding:20px 48px;border-bottom:1px solid #1a2240;}
+  .nav-brand{display:flex;align-items:center;gap:12px}
+  .nav-brand h1{font-family:'Newsreader',serif;font-size:20px;font-weight:700;color:#f0ede4}
+  .nav-brand p{font-size:10px;color:#6a7a9e;margin-top:2px;text-transform:uppercase;letter-spacing:0.8px}
+  .nav-links{display:flex;align-items:center;gap:16px}
+  .nav-pill{display:flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(61,201,176,0.07);border:1px solid rgba(61,201,176,0.2);border-radius:4px;font-size:10px;color:#3DC9B0;font-weight:700}
+  .nav-dot{width:6px;height:6px;background:#3DC9B0;border-radius:50%;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+  .launch-btn{padding:8px 20px;background:#3a5fff;color:#fff;border-radius:6px;font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:background 0.2s}
+  .launch-btn:hover{background:#5570ff}
+
+  /* HERO */
+  .hero{max-width:900px;margin:0 auto;padding:80px 48px 60px;text-align:center}
+  .hero-tag{display:inline-block;padding:5px 14px;background:rgba(232,163,61,0.1);border:1px solid rgba(232,163,61,0.25);border-radius:20px;font-size:10px;color:#E8A33D;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:24px}
+  .hero h2{font-family:'Newsreader',serif;font-size:48px;font-weight:700;color:#f0ede4;line-height:1.2;margin-bottom:20px;letter-spacing:-0.5px}
+  .hero h2 span{color:#3DC9B0}
+  .hero p{font-size:14px;color:#8a9ac0;line-height:1.8;max-width:600px;margin:0 auto 36px}
+  .hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn-primary{padding:12px 28px;background:#3a5fff;color:#fff;border-radius:6px;font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:all 0.2s;box-shadow:0 0 20px rgba(58,95,255,0.3)}
+  .btn-primary:hover{background:#5570ff;box-shadow:0 0 30px rgba(58,95,255,0.5)}
+  .btn-secondary{padding:12px 28px;background:transparent;color:#d4d8f0;border:1px solid #1a2240;border-radius:6px;font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:all 0.2s}
+  .btn-secondary:hover{border-color:#3a5fff;color:#fff}
+
+  /* STATS BAR */
+  .stats-bar{display:flex;gap:0;border:1px solid #1a2240;border-radius:8px;overflow:hidden;max-width:600px;margin:48px auto 0}
+  .stat-item{flex:1;padding:16px 20px;text-align:center;border-right:1px solid #1a2240}
+  .stat-item:last-child{border-right:none}
+  .stat-num{font-size:24px;font-weight:700;color:#E8A33D;font-family:'JetBrains Mono',monospace}
+  .stat-label{font-size:9px;color:#6a7a9e;text-transform:uppercase;letter-spacing:0.8px;margin-top:3px}
+
+  /* SCREENSHOT PREVIEW */
+  .preview{max-width:1000px;margin:60px auto;padding:0 48px}
+  .preview-label{font-size:10px;color:#6a7a9e;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;text-align:center}
+  .preview-box{background:#0f1526;border:1px solid #1a2240;border-radius:12px;padding:24px;overflow:hidden}
+  .preview-header{display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #1a2240}
+  .preview-dot{width:10px;height:10px;border-radius:50%}
+  .preview-url{flex:1;background:#080b14;border:1px solid #1a2240;border-radius:4px;padding:6px 12px;font-size:11px;color:#6a7a9e;text-align:center}
+  .preview-screen{background:#080b14;border-radius:8px;border:1px solid #1a2240;padding:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .mini-card{background:#0f1526;border:1px solid #1a2240;border-radius:6px;padding:12px}
+  .mini-card-title{font-size:9px;color:#6a7a9e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px}
+  .mini-bar{height:4px;border-radius:2px;margin-bottom:4px}
+  .mini-score{font-size:20px;font-weight:700;color:#E8A33D;font-family:'JetBrains Mono',monospace}
+  .mini-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;margin-top:6px}
+
+  /* HOW IT WORKS */
+  .how{max-width:900px;margin:0 auto;padding:60px 48px}
+  .how h3{font-family:'Newsreader',serif;font-size:32px;font-weight:700;color:#f0ede4;text-align:center;margin-bottom:8px}
+  .how-sub{font-size:12px;color:#6a7a9e;text-align:center;margin-bottom:48px}
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px}
+  .step{background:#0f1526;border:1px solid #1a2240;border-radius:8px;padding:24px;position:relative}
+  .step-num{font-size:32px;font-weight:700;color:#1a2240;font-family:'JetBrains Mono',monospace;margin-bottom:12px}
+  .step-icon{font-size:20px;margin-bottom:10px}
+  .step h4{font-family:'Newsreader',serif;font-size:16px;color:#f0ede4;margin-bottom:8px;font-weight:600}
+  .step p{font-size:11px;color:#6a7a9e;line-height:1.7}
+  .step-connector{position:absolute;right:-11px;top:50%;transform:translateY(-50%);color:#1a2240;font-size:18px;z-index:1}
+
+  /* FEATURES */
+  .features{max-width:900px;margin:0 auto;padding:0 48px 60px}
+  .features h3{font-family:'Newsreader',serif;font-size:32px;font-weight:700;color:#f0ede4;text-align:center;margin-bottom:8px}
+  .features-sub{font-size:12px;color:#6a7a9e;text-align:center;margin-bottom:48px}
+  .feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .feature{background:#0f1526;border:1px solid #1a2240;border-radius:8px;padding:20px;transition:border-color 0.2s}
+  .feature:hover{border-color:#3a5fff}
+  .feature-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:12px}
+  .feature h4{font-size:13px;font-weight:700;color:#f0ede4;margin-bottom:6px}
+  .feature p{font-size:11px;color:#6a7a9e;line-height:1.6}
+
+  /* TECH STACK */
+  .tech{max-width:900px;margin:0 auto;padding:0 48px 60px}
+  .tech h3{font-family:'Newsreader',serif;font-size:32px;font-weight:700;color:#f0ede4;text-align:center;margin-bottom:8px}
+  .tech-sub{font-size:12px;color:#6a7a9e;text-align:center;margin-bottom:36px}
+  .tech-pills{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+  .tech-pill{padding:8px 16px;background:#0f1526;border:1px solid #1a2240;border-radius:4px;font-size:11px;color:#d4d8f0}
+  .tech-pill span{color:#6a7a9e;margin-right:6px}
+
+  /* CTA */
+  .cta{max-width:900px;margin:0 auto;padding:0 48px 80px;text-align:center}
+  .cta-box{background:linear-gradient(135deg,#0f1526,#111d3a);border:1px solid #1a2240;border-radius:12px;padding:48px}
+  .cta-box h3{font-family:'Newsreader',serif;font-size:32px;color:#f0ede4;margin-bottom:12px}
+  .cta-box p{font-size:12px;color:#6a7a9e;margin-bottom:28px;line-height:1.7}
+
+  /* FOOTER */
+  footer{border-top:1px solid #0f1628;padding:20px 48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+  .footer-left{font-size:10px;color:#2a3a5a}
+  .footer-links{display:flex;gap:16px}
+  .footer-links a{font-size:10px;color:#4a5878;transition:color 0.2s}
+  .footer-links a:hover{color:#d4d8f0}
+
+  .divider{border:none;border-top:1px solid #1a2240;margin:0 48px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">
+    <svg width="30" height="30" viewBox="0 0 34 34" fill="none">
+      <path d="M4 17 L14 17 L20 8" stroke="#E8A33D" stroke-width="2" stroke-linecap="round" fill="none"/>
+      <path d="M4 17 L14 17 L20 26" stroke="#3DC9B0" stroke-width="2" stroke-linecap="round" fill="none"/>
+      <circle cx="4" cy="17" r="2.5" fill="#E8E6DE"/>
+    </svg>
+    <div>
+      <h1>Divergence Engine</h1>
+      <p>TxODDS × Solana Devnet</p>
+    </div>
+  </div>
+  <div class="nav-links">
+    <div class="nav-pill"><div class="nav-dot"></div>Live on Solana Devnet</div>
+    <a href="/app" class="launch-btn">Launch Dashboard →</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="hero-tag">TxODDS World Cup 2026 Hackathon</div>
+  <h2>The Intelligence Layer<br/>for <span>Sports Markets</span></h2>
+  <p>Divergence Engine autonomously monitors live World Cup odds from TxLINE, detects abnormal market movement, scores signals in real time, and explains exactly why a fixture is being flagged — with zero manual input once deployed.</p>
+  <div class="hero-btns">
+    <a href="/app" class="btn-primary">Launch Live Dashboard →</a>
+    <a href="https://solscan.io/tx/4CQSxcwPCGub4Eyz9L2HaqEqfb5QHw1qDpJKBqUqCrwgdGNozhFwPLsEJfY1Vf2PNfpdHYG4Zxw1eohtJTF93i8U?cluster=devnet" target="_blank" class="btn-secondary">View On-Chain Proof</a>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-item">
+      <div class="stat-num">60s</div>
+      <div class="stat-label">Poll Interval</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">104</div>
+      <div class="stat-label">WC Matches</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">0-100</div>
+      <div class="stat-label">Signal Score</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">100%</div>
+      <div class="stat-label">Autonomous</div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD PREVIEW -->
+<div class="preview">
+  <div class="preview-label">Live Dashboard Preview</div>
+  <div class="preview-box">
+    <div class="preview-header">
+      <div class="preview-dot" style="background:#E85D4A"></div>
+      <div class="preview-dot" style="background:#E8A33D;margin-left:4px"></div>
+      <div class="preview-dot" style="background:#3DC9B0;margin-left:4px"></div>
+      <div class="preview-url">divergence-engine-production.up.railway.app/app</div>
+    </div>
+    <div class="preview-screen">
+      <div class="mini-card">
+        <div class="mini-card-title">Brazil vs Japan</div>
+        <div class="mini-score">76</div>
+        <div>
+          <div class="mini-bar" style="width:67%;background:#E8A33D"></div>
+          <div class="mini-bar" style="width:100%;background:#ff4757"></div>
+          <div class="mini-bar" style="width:90%;background:#E8A33D"></div>
+        </div>
+        <div class="mini-badge" style="background:rgba(255,107,53,0.15);color:#ff6b35;border:1px solid rgba(255,107,53,0.3)">HIGH CONFIDENCE</div>
+      </div>
+      <div class="mini-card">
+        <div class="mini-card-title">Signal Timeline</div>
+        <div style="font-size:9px;color:#6a7a9e;line-height:1.8">
+          <div style="color:#ff6b35">12:21 · HIGH signal fired</div>
+          <div>12:20 · Poll #24 complete</div>
+          <div style="color:#fbbf24">12:19 · MEDIUM signal</div>
+          <div>12:18 · 2 fixtures active</div>
+          <div>12:17 · Engine polling...</div>
+        </div>
+      </div>
+      <div class="mini-card">
+        <div class="mini-card-title">On-Chain Proof</div>
+        <div style="font-size:9px;color:#3DC9B0;margin-bottom:6px">● Active · Solana Devnet</div>
+        <div style="font-size:8px;color:#4a5878;line-height:1.6;word-break:break-all">4CQSxcwPCGub4Eyz9L2Ha...</div>
+        <div class="mini-badge" style="margin-top:8px;background:rgba(61,201,176,0.1);color:#3DC9B0;border:1px solid rgba(61,201,176,0.25)">TxLINE World Cup 2026</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- HOW IT WORKS -->
+<div class="how">
+  <h3>How It Works</h3>
+  <p class="how-sub">Four steps from raw odds data to an actionable intelligence signal</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">01</div>
+      <div class="step-icon">⛓</div>
+      <h4>On-Chain Subscribe</h4>
+      <p>A Solana wallet signs a subscription transaction to TxLINE's free World Cup tier — cryptographically anchored and verifiable on Solscan.</p>
+      <div class="step-connector">→</div>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <div class="step-icon">◎</div>
+      <h4>Live Odds Polling</h4>
+      <p>The engine polls TxLINE's 1X2 odds across all active fixtures every 60 seconds, building a rolling history of smoothed probability data.</p>
+      <div class="step-connector">→</div>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <div class="step-icon">⚡</div>
+      <h4>Divergence Scoring</h4>
+      <p>Each poll computes Magnitude × Velocity × Consistency into a 0-100 signal score. Scores above threshold fire a flagged Divergence Event.</p>
+      <div class="step-connector">→</div>
+    </div>
+    <div class="step">
+      <div class="step-num">04</div>
+      <div class="step-icon">◆</div>
+      <h4>Explained Signal</h4>
+      <p>Every flagged event includes a plain-language reason — not just a number. HIGH/MEDIUM/LOW confidence with specific drift context.</p>
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- FEATURES -->
+<div class="features">
+  <h3>Key Features</h3>
+  <p class="features-sub">Built for builders, traders, and anyone who needs to understand where markets are moving</p>
+  <div class="feature-grid">
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(232,163,61,0.1)">⚡</div>
+      <h4>Signal Scoring Engine</h4>
+      <p>Composite 0-100 score from drift magnitude, velocity relative to fixture baseline, and directional consistency across polls.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(61,201,176,0.1)">⛓</div>
+      <h4>On-Chain Proof</h4>
+      <p>Every subscription is verified on Solana devnet. Click through to Solscan to confirm the transaction is real and on-chain.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(58,95,255,0.1)">◎</div>
+      <h4>Signal Timeline</h4>
+      <p>Live feed of every poll, signal, and divergence event — timestamped and color-coded by confidence level in real time.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(236,72,153,0.1)">▶</div>
+      <h4>Demo Replay Mode</h4>
+      <p>6-step animated walkthrough showing the engine catching a market shock — from stable odds to SIGNAL TRIGGERED in 50 seconds.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(139,92,246,0.1)">◈</div>
+      <h4>Risk Lab</h4>
+      <p>Degen vs Smart Money mode — interactive model showing how stacking legs destroys combined probability even with high-confidence signals.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(20,184,166,0.1)">▸</div>
+      <h4>Market Intelligence API</h4>
+      <p>Live JSON output from every poll — curl-ready endpoint that other developers can consume to power alerts, bots, or trading tools.</p>
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- TECH STACK -->
+<div class="tech">
+  <h3>Built With</h3>
+  <p class="tech-sub">Production-grade stack, zero unnecessary dependencies</p>
+  <div class="tech-pills">
+    <div class="tech-pill"><span>Runtime</span>Node.js</div>
+    <div class="tech-pill"><span>Blockchain</span>Solana Devnet</div>
+    <div class="tech-pill"><span>Data Layer</span>TxLINE by TxODDS</div>
+    <div class="tech-pill"><span>Subscription</span>Anchor + @solana/web3.js</div>
+    <div class="tech-pill"><span>Frontend</span>React + Tailwind CSS</div>
+    <div class="tech-pill"><span>Charts</span>Chart.js</div>
+    <div class="tech-pill"><span>Deployment</span>Railway</div>
+    <div class="tech-pill"><span>Proof</span>Solscan Devnet</div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- CTA -->
+<div class="cta">
+  <div class="cta-box">
+    <h3>See It Live</h3>
+    <p>The engine is running right now — polling TxLINE's World Cup odds feed every 60 seconds,<br/>scoring signals, and logging divergences autonomously.</p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <a href="/app" class="btn-primary">Launch Dashboard →</a>
+      <a href="https://github.com/juniorprincemhelem/divergence-engine" target="_blank" class="btn-secondary">View on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-left">Divergence Engine v1.0 · TxODDS World Cup 2026 Hackathon · Built on Solana Devnet</div>
+  <div class="footer-links">
+    <a href="/app">Dashboard</a>
+    <a href="https://github.com/juniorprincemhelem/divergence-engine" target="_blank">GitHub</a>
+    <a href="https://solscan.io/tx/4CQSxcwPCGub4Eyz9L2HaqEqfb5QHw1qDpJKBqUqCrwgdGNozhFwPLsEJfY1Vf2PNfpdHYG4Zxw1eohtJTF93i8U?cluster=devnet" target="_blank">Solscan</a>
+  </div>
+</footer>
+
+</body>
+</html>`;
+
 const server = http.createServer(function(req, res) {
   if (req.url === "/data") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ pollCount: pollCount, fixtures: liveData, divergences: divergenceLog }));
     return;
   }
+  if (req.url === "/app") {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(html);
+    return;
+  }
   res.writeHead(200, { "Content-Type": "text/html" });
-  res.end(html);
+  res.end(landingHtml);
 });
 
 server.listen(PORT, HOST, function() {

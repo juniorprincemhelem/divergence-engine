@@ -39,6 +39,24 @@ try {
   console.warn("No local fixtures.json found. Starting without fixture data.");
 }
 
+// Refresh fixtures every hour
+async function refreshFixtures() {
+  try {
+    const res = await axios.get(baseUrl + "/api/fixtures/snapshot", { headers });
+    if (res.data && res.data.length > 0) {
+      fixtures = res.data;
+      fs.writeFileSync("./fixtures.json", JSON.stringify(fixtures, null, 2));
+      console.log("Fixtures refreshed: " + fixtures.length + " fixtures loaded");
+    }
+  } catch (e) {
+    console.error("Fixture refresh failed:", e.response?.status, e.message);
+  }
+}
+
+// Refresh immediately on startup, then every hour
+refreshFixtures();
+setInterval(refreshFixtures, 60 * 60 * 1000);
+
 let oddsHistory = {};
 let divergenceLog = [];
 let pollCount = 0;
@@ -976,8 +994,8 @@ const landingHtml = `<!DOCTYPE html>
       <div class="stat-label">Poll Interval</div>
     </div>
     <div class="stat-item">
-      <div class="stat-num">104</div>
-      <div class="stat-label">WC Matches</div>
+      <div class="stat-num">3</div>
+      <div class="stat-label">API Endpoints</div>
     </div>
     <div class="stat-item">
       <div class="stat-num">0-100</div>
@@ -1104,6 +1122,21 @@ const landingHtml = `<!DOCTYPE html>
       <div class="feature-icon" style="background:rgba(20,184,166,0.1)">▸</div>
       <h4>Market Intelligence API</h4>
       <p>Live JSON output from every poll — curl-ready endpoint that other developers can consume to power alerts, bots, or trading tools.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(236,72,153,0.1)">⚡</div>
+      <h4>Live Signal Leaderboard</h4>
+      <p>Real-time ranking of the highest-scoring divergence signals in the last 24 hours — updated every poll cycle.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(232,163,61,0.1)">◈</div>
+      <h4>Volatility Snapshot</h4>
+      <p>Per-fixture odds range tracking — shows how far home, draw, and away prices have moved since monitoring began.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(58,95,255,0.1)">▸</div>
+      <h4>Public Signal API</h4>
+      <p>Three curl-ready endpoints — /api/signals/latest, /api/volatility, /api/leaderboard — consumable by any external tool or bot.</p>
     </div>
   </div>
 </div>

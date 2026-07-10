@@ -270,11 +270,42 @@ const FLAG_CODES = {
   'Canada':'ca','Croatia':'hr','Serbia':'rs','Ukraine':'ua',
   'Poland':'pl','Denmark':'dk','Iran':'ir','Cameroon':'cm',
   'Tunisia':'tn','Saudi Arabia':'sa','Qatar':'qa','Uruguay':'uy',
+  // Added World Cup 2026 participant nations
+  'Spain':'es','Portugal':'pt','Italy':'it','South Korea':'kr',
+  'Chile':'cl','Peru':'pe','Venezuela':'ve','Bolivia':'bo',
+  'Costa Rica':'cr','Jamaica':'jm','Panama':'pa','Honduras':'hn',
+  'Austria':'at','Czech Republic':'cz','Czechia':'cz','Hungary':'hu',
+  'Romania':'ro','Scotland':'gb-sct','Wales':'gb-wls','Slovakia':'sk',
+  'Slovenia':'si','Georgia':'ge','Greece':'gr','Turkey':'tr',
+  'Iceland':'is','Ireland':'ie','Finland':'fi','Nigeria':'ng',
+  'South Africa':'za','Mali':'ml','Angola':'ao','Zambia':'zm',
+  'Iraq':'iq','United Arab Emirates':'ae','UAE':'ae','Uzbekistan':'uz',
+  'Thailand':'th','Indonesia':'id','Jordan':'jo','Syria':'sy',
+  'China':'cn','New Zealand':'nz','Albania':'al','Montenegro':'me',
+  'North Macedonia':'mk','Bulgaria':'bg','Israel':'il','Lebanon':'lb',
+  'Kuwait':'kw','Oman':'om','Bahrain':'bh','India':'in',
+  'Philippines':'ph','Kenya':'ke','Uganda':'ug','Tanzania':'tz',
+  'Ethiopia':'et','Zimbabwe':'zw','Kosovo':'xk','Russia':'ru',
+  'Cuba':'cu','Guatemala':'gt','Haiti':'ht','Trinidad and Tobago':'tt',
+  'Equatorial Guinea':'gq','Gabon':'ga','Congo':'cg','Benin':'bj',
+  'Guinea':'gn','Mozambique':'mz','Sudan':'sd','South Sudan':'ss',
+  'Libya':'ly','Nicaragua':'ni','El Salvador':'sv','Togo':'tg',
+  'Burundi':'bi','Rwanda':'rw','Malawi':'mw','Namibia':'na',
+  'Sierra Leone':'sl','Niger':'ne','Chad':'td','Comoros':'km',
+  'Central African Republic':'cf','Gambia':'gm','Mauritania':'mr',
+  'Liberia':'lr','Madagascar':'mg','Guinea-Bissau':'gw','Lesotho':'ls',
+  'Eswatini':'sz','Kyrgyzstan':'kg','Turkmenistan':'tm','Armenia':'am',
+  'Azerbaijan':'az','Belarus':'by','Cyprus':'cy','Estonia':'ee',
+  'Latvia':'lv','Lithuania':'lt','Luxembourg':'lu','Malta':'mt',
+  'Moldova':'md','Montserrat':'ms','Northern Ireland':'gb-nir',
 };
 
 function FlagImg({ team }) {
   const code = FLAG_CODES[team];
-  if (!code) return <span className="w-5 inline-block"/>;
+  if (!code) {
+    const initials = (team || '?').split(/\s+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+    return <span className="inline-block w-5 text-center text-[10px] font-bold text-slate-500 align-middle" title={team}>{initials}</span>;
+  }
   return <img src={"https://flagcdn.com/20x15/" + code + ".png"} width="20" height="15" style={{borderRadius:'2px',verticalAlign:'middle',marginRight:'4px'}} alt={team}/>;
 }
 
